@@ -235,7 +235,7 @@ impl Universe {
 
     pub fn get_channel(&self, channel_definition: &ChannelDefinition) -> Result<ChannelValue, DmxError> {
         let value_bytes = match channel_definition.channel_type {
-            ChannelType::RGB => 3,
+            ChannelType::Rgb => 3,
             ChannelType::TriWhite => 3,
             ChannelType::Single => 1,
         };
@@ -247,7 +247,7 @@ impl Universe {
         let offset = DMX_DATA_OFFSET + channel_definition.channel as usize;
 
         match channel_definition.channel_type {
-            ChannelType::RGB => {
+            ChannelType::Rgb => {
                 Ok(ChannelValue {
                     channel: channel_definition.channel,
                     value: DimmerValue::Rgb(self.packet_bytes[offset], self.packet_bytes[offset + 1], self.packet_bytes[offset + 2]),
@@ -389,7 +389,7 @@ mod test_universe {
         let universe = get_universe("test");
 
         assert!(universe.get_channel(&ChannelDefinition { channel:305, channel_type: ChannelType::Single}).is_ok());
-        let result = universe.get_channel(&ChannelDefinition { channel: 305, channel_type: ChannelType::RGB});
+        let result = universe.get_channel(&ChannelDefinition { channel: 305, channel_type: ChannelType::Rgb});
 
         match result {
             Err(DmxError::InvalidChannel(d, 305, 306)) if d == "test" => {},
@@ -483,7 +483,7 @@ mod test_dmx_manager {
         };
 
         assert!(manager.set_channel("test", &channel_value).is_ok());
-        let v = manager.get_channel("test", &ChannelDefinition { channel: 10, channel_type: ChannelType::RGB}).unwrap();
+        let v = manager.get_channel("test", &ChannelDefinition { channel: 10, channel_type: ChannelType::Rgb}).unwrap();
         assert_eq!(v.value, DimmerValue::Rgb(3, 5, 8));
     }
 

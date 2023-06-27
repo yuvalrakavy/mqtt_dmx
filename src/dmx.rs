@@ -38,7 +38,7 @@ pub enum DmxError {
 
 #[derive(Debug, PartialEq)]
 pub enum ChannelType {
-    RGB,
+    Rgb,
     TriWhite,
     Single,
 }
@@ -47,6 +47,12 @@ pub enum ChannelType {
 pub struct ChannelDefinition {
     pub channel: u16,
     pub channel_type: ChannelType,
+}
+
+#[derive(Debug)]
+pub struct UniverseChannelDefinitions {
+    pub universe_id: String,
+    pub channels: Vec<ChannelDefinition>, 
 }
 
 #[derive(Debug, PartialEq)]
@@ -102,7 +108,7 @@ impl FromStr for ChannelDefinition {
     /// string syntax
     /// n -> ChannelDefinition { channel: n, channel_type: ChannelType::Single }
     /// s:n -> ChannelDefinition { channel: n, channel_type: ChannelType::Single }
-    /// rgb:(n) -> ChannelDefinition { channel: n, channel_type: ChannelType::RGB }
+    /// rgb:n -> ChannelDefinition { channel: n, channel_type: ChannelType::RGB }
     /// w:n -> ChannelDefinition { channel: n, channel_type: ChannelType::TriWhite }
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let column = s.find(':');
@@ -115,7 +121,7 @@ impl FromStr for ChannelDefinition {
         let channel = channel.parse::<u16>().map_err(|_| DmxError::InvalidChannelAddress(s.to_string()))?;
 
         match channel_type.to_lowercase().as_str() {
-            "rgb" => Ok(ChannelDefinition { channel, channel_type: ChannelType::RGB }),
+            "rgb" => Ok(ChannelDefinition { channel, channel_type: ChannelType::Rgb }),
             "w" => Ok(ChannelDefinition { channel, channel_type: ChannelType::TriWhite }),
             "s" => Ok(ChannelDefinition { channel, channel_type: ChannelType::Single }),
             _ => Err(DmxError::InvalidChannelAddress(s.to_string())),
@@ -126,7 +132,7 @@ impl FromStr for ChannelDefinition {
 impl TargetValue {
     pub fn get(&self, channel_type: ChannelType) -> Option<DimmerValue> {
         match channel_type {
-            ChannelType::RGB => self.rgb.map(|(r,g,b)| DimmerValue::Rgb(r,g,b)),
+            ChannelType::Rgb => self.rgb.map(|(r,g,b)| DimmerValue::Rgb(r,g,b)),
             ChannelType::TriWhite => self.tri_white.map(|(w1,w2,w3)| DimmerValue::TriWhite(w1,w2,w3)),
             ChannelType::Single => self.single.map(|s| DimmerValue::Single(s)),
         }
@@ -182,7 +188,7 @@ mod test_parse_value {
         let v = "rgb:1".parse::<ChannelDefinition>().unwrap();
         assert_eq!(v, ChannelDefinition {
             channel: 1,
-            channel_type: ChannelType::RGB,
+            channel_type: ChannelType::Rgb,
         });
 
         let v = "s:2".parse::<ChannelDefinition>().unwrap();
@@ -209,22 +215,22 @@ mod test_parse_value {
         let v = "s(10);rgb(10,20,30);w(5,6,7)".parse::<TargetValue>().unwrap();
 
         assert_eq!(v.get(ChannelType::Single), Some(DimmerValue::Single(10)));
-        assert_eq!(v.get(ChannelType::RGB), Some(DimmerValue::Rgb(10, 20, 30)));
+        assert_eq!(v.get(ChannelType::Rgb), Some(DimmerValue::Rgb(10, 20, 30)));
         assert_eq!(v.get(ChannelType::TriWhite), Some(DimmerValue::TriWhite(5, 6, 7)));
 
         let v = "s(10)".parse::<TargetValue>().unwrap();
         assert_eq!(v.get(ChannelType::Single), Some(DimmerValue::Single(10)));
-        assert_eq!(v.get(ChannelType::RGB), None);
+        assert_eq!(v.get(ChannelType::Rgb), None);
         assert_eq!(v.get(ChannelType::TriWhite), None);
 
         let v = "rgb(10,20,30)".parse::<TargetValue>().unwrap();
         assert_eq!(v.get(ChannelType::Single), None);
-        assert_eq!(v.get(ChannelType::RGB), Some(DimmerValue::Rgb(10, 20, 30)));
+        assert_eq!(v.get(ChannelType::Rgb), Some(DimmerValue::Rgb(10, 20, 30)));
         assert_eq!(v.get(ChannelType::TriWhite), None);
 
         let v = "w(5,6,7)".parse::<TargetValue>().unwrap();
         assert_eq!(v.get(ChannelType::Single), None);
-        assert_eq!(v.get(ChannelType::RGB), None);
+        assert_eq!(v.get(ChannelType::Rgb), None);
         assert_eq!(v.get(ChannelType::TriWhite), Some(DimmerValue::TriWhite(5, 6, 7)));
 
         let v = "s(10);s(20)".parse::<TargetValue>();

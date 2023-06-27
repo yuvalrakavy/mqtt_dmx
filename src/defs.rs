@@ -14,19 +14,20 @@ pub struct UniverseDefinition {
 }
 
 #[derive(Debug, Deserialize)]
-enum EffectReference {
-    EffectName(String),
-    Effect(EffectNodeDefinition),
+pub enum EffectReference {
+    Effect(String),
+    Definition(EffectNodeDefinition),
 }
 
 #[derive(Debug, Deserialize)]
 pub struct DmxArray {
     pub description: String,
     
-    lights: HashMap<String, String>,
-    effects: HashMap<String, EffectNodeDefinition>,
-    values: HashMap<String, String>,
-    presets: Vec<DmxArrayPreset>,
+    pub universe_id: String,        // Default universe to use
+    pub lights: HashMap<String, String>,
+    pub effects: HashMap<String, Effect>,
+    pub values: HashMap<String, String>,
+    pub presets: Vec<DmxArrayPreset>,
 }
 
 /// Dmx Array Preset
@@ -40,10 +41,10 @@ pub struct DmxArrayPreset {
 
 /// Effect
 #[derive(Debug, Deserialize)]
-struct Effect {
-    values: Option<HashMap<String, String>>,
-    fade_in: Option<EffectReference>,
-    fade_out: Option<EffectReference>,
+pub struct Effect {
+    pub values: HashMap<String, String>,
+    pub fade_in: Option<EffectReference>,
+    pub fade_out: Option<EffectReference>,
 }
 
 /// Effect modes

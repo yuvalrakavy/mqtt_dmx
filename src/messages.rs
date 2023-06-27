@@ -25,4 +25,6 @@ pub enum ToMqttPublisherMessage {
 pub enum ToArrayManagerMessage {
     AddArray(String, defs::DmxArray, Sender<Result<(), DmxArrayError>>),
     RemoveArray(String, Sender<Result<(), DmxArrayError>>),
+
+    GetLightChannels(String, String, Sender<Result<Vec<dmx::UniverseChannelDefinitions>, DmxArrayError>>),
 }
