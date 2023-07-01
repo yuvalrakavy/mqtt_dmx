@@ -31,7 +31,7 @@ impl Service {
 
     async fn connect_to_mqtt_broker(mqtt_broker: &str) -> (AsyncClient, EventLoop) {
         let mut mqtt_options = MqttOptions::new("DMX", mqtt_broker, 1883);
-        let last_will_topic = format!("DMX/Active");
+        let last_will_topic = "DMX/Active".to_string();
         let last_will = LastWill::new(&last_will_topic, "false".as_bytes(), QoS::AtLeastOnce, true);
         mqtt_options.set_keep_alive(Duration::from_secs(5)).set_last_will(last_will);
     
@@ -41,7 +41,7 @@ impl Service {
         mqtt_client.publish(&last_will_topic, QoS::AtLeastOnce, true, "true".as_bytes()).await.unwrap();
 
         // Subscribe to commands
-        mqtt_client.subscribe(format!("DMX/#"), QoS::AtLeastOnce).await.unwrap();
+        mqtt_client.subscribe("DMX/#".to_string(), QoS::AtLeastOnce).await.unwrap();
         (mqtt_client, event_loop)
     }
 }

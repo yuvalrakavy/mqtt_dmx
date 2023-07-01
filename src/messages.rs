@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use tokio::sync::oneshot::Sender;
 use crate::defs;
 use crate::{dmx, dmx::DmxError, array_manager::DmxArrayError};
@@ -25,6 +27,9 @@ pub enum ToMqttPublisherMessage {
 pub enum ToArrayManagerMessage {
     AddArray(String, defs::DmxArray, Sender<Result<(), DmxArrayError>>),
     RemoveArray(String, Sender<Result<(), DmxArrayError>>),
+
+    AddValues(HashMap<String, String>, Sender<Result<(), DmxArrayError>>),
+    RemoveValues(Sender<Result<(), DmxArrayError>>),
 
     GetLightChannels(String, String, Sender<Result<Vec<dmx::UniverseChannelDefinitions>, DmxArrayError>>),
 }

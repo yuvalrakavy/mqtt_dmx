@@ -1,9 +1,11 @@
+use std::collections::HashMap;
 use tokio::{select, sync::{oneshot, mpsc::Sender}};
 use tokio_util::sync::CancellationToken;
 use log::{error, info};
 use bytes::Bytes;
 use rumqttc::{EventLoop, Packet};
 use thiserror::Error;
+
 
 
 use crate::{dmx::DmxError, array_manager::DmxArrayError, defs::UniverseDefinition, messages, defs};
@@ -26,11 +28,11 @@ enum MqttMessageError {
     #[error("Universe error: {0}")]
     UniverseOperationError(#[from] DmxError),
 
-    #[error("DMX Array error: {0}")]
+    #[error("DMX Array/Values error: {0}")]
     ArrayOperationError(#[from] DmxArrayError),
 
-    #[error("Error parsing definition of universe Id ('{0}'): {1}")]
-    UniverseDefinitionParseError(String, #[source] serde_json::Error),
+    #[error("Error parsing {0} ('{1}'): {2}")]
+    JsonParseError(String, String, #[source] serde_json::Error),
 }
 
 struct MqttSubscriber {
@@ -87,7 +89,7 @@ pub async fn run(cancelled: CancellationToken, mut event_loop: EventLoop,
 impl MqttSubscriber {
 
     async fn handle_message(&self, topic: &str, payload: &Bytes) -> Result<(), MqttMessageError> {
-        let topic_parts: Vec<&str> = topic.split("/").collect();
+        let topic_parts: Vec<&str> = topic.split('/').collect();
 
         if topic_parts.len() < 2 {
             Err(MqttMessageError::MissingSubtopic)
@@ -111,6 +113,7 @@ impl MqttSubscriber {
                     }
 
                 }
+                "Values" => self.handle_values_message(payload).await,
                 "Error" | "LastError" | "Active" => Ok(()),      // Ignore any message posted to Error subtopic since it is published by this service
                 _ => Err(MqttMessageError::InvalidSubtopic(topic_parts[1].to_string())) 
             }
@@ -119,7 +122,7 @@ impl MqttSubscriber {
 
     async fn handle_universe_message(&self, universe_id: &str, payload: &Bytes) -> Result<(), MqttMessageError> {
         // If no payload is given, remove the universe
-        if payload.len() == 0 {
+        if payload.is_empty() {
             let (tx, rx) = oneshot::channel::<Result<(), DmxError>>();
 
             self.to_dmx_tx.send(messages::ToArtnetManagerMessage::RemoveUniverse(universe_id.to_string(), tx)).await.unwrap();
@@ -139,7 +142,7 @@ impl MqttSubscriber {
                         return Err(MqttMessageError::UniverseOperationError(e))
                     }
                 },
-                Err(e) => return Err(MqttMessageError::UniverseDefinitionParseError(universe_id.to_string(), e))
+                Err(e) => return Err(MqttMessageError::JsonParseError("universe definition".to_string(), universe_id.to_string(), e))
             }
 
         }
@@ -149,7 +152,7 @@ impl MqttSubscriber {
 
     async fn handle_array_message(&self, array_id: &str, payload: &Bytes) -> Result<(), MqttMessageError> {
         // If no payload is given, remove the array
-        if payload.len() == 0 {
+        if payload.is_empty() {
             let (tx, rx) = oneshot::channel::<Result<(), DmxArrayError>>();
 
             self.to_array_tx.send(messages::ToArrayManagerMessage::RemoveArray(array_id.to_string(), tx)).await.unwrap();
@@ -169,7 +172,36 @@ impl MqttSubscriber {
                         return Err(MqttMessageError::ArrayOperationError(e))
                     }
                 },
-                Err(e) => return Err(MqttMessageError::UniverseDefinitionParseError(array_id.to_string(), e))
+                Err(e) => return Err(MqttMessageError::JsonParseError("DMX array definition".to_string(), array_id.to_string(), e))
+            }
+
+        }
+
+        Ok(())
+    }
+
+    async fn handle_values_message(&self, payload: &Bytes) -> Result<(), MqttMessageError> {
+        if payload.is_empty() {
+            let (tx, rx) = oneshot::channel::<Result<(), DmxArrayError>>();
+
+            self.to_array_tx.send(messages::ToArrayManagerMessage::RemoveValues(tx)).await.unwrap();
+
+            if let Err(e) = rx.await.unwrap() {
+                return Err(MqttMessageError::ArrayOperationError(e))
+            }
+        }
+        else {
+            match serde_json::from_slice::<HashMap<String, String>>(payload) {
+                Ok(values) => {
+                    let (tx, rx) = oneshot::channel::<Result<(), DmxArrayError>>();
+
+                    self.to_array_tx.send(messages::ToArrayManagerMessage::AddValues(values, tx)).await.unwrap();
+
+                    if let Err(e) = rx.await.unwrap() {
+                        return Err(MqttMessageError::ArrayOperationError(e))
+                    }
+                },
+                Err(e) => return Err(MqttMessageError::JsonParseError("values definition".to_string(), "global".to_string(), e))
             }
 
         }

@@ -1,7 +1,6 @@
 use std::str::FromStr;
 use thiserror::Error;
-use serde::Deserialize;
-use std::net::IpAddr;
+use crate::defs::TargetValue;
 
 #[derive(Debug, Error)]
 pub enum DmxError {
@@ -36,14 +35,14 @@ pub enum DmxError {
     AmbiguousTargetValue(String),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ChannelType {
     Rgb,
     TriWhite,
     Single,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct ChannelDefinition {
     pub channel: u16,
     pub channel_type: ChannelType,
@@ -55,24 +54,17 @@ pub struct UniverseChannelDefinitions {
     pub channels: Vec<ChannelDefinition>, 
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum DimmerValue {
     Rgb (u8, u8, u8),
     TriWhite (u8, u8, u8),
     Single (u8),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct ChannelValue {
     pub channel: u16,
     pub value: DimmerValue,
-}
-
-#[derive(Debug, PartialEq, Default)]
-pub struct TargetValue {
-    pub single: Option<u8>,
-    pub rgb: Option<(u8, u8, u8)>,
-    pub tri_white: Option<(u8, u8, u8)>,
 }
 
 impl FromStr for DimmerValue {
@@ -86,10 +78,10 @@ impl FromStr for DimmerValue {
     /// w(w1, w2, w3) -> DimmerValue::TriWhite(w1, w2, w3)
     /// 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let open_parenthesis = s.find('(').ok_or(DmxError::InvalidDimmerValue(s.to_string()))?;
-        let close_parenthesis = s.find(')').ok_or(DmxError::InvalidDimmerValue(s.to_string()))?;
+        let open_parenthesis = s.find('(').ok_or_else(|| DmxError::InvalidDimmerValue(s.to_string()))?;
+        let close_parenthesis = s.find(')').ok_or_else(|| DmxError::InvalidDimmerValue(s.to_string()))?;
         let value_type = s[..open_parenthesis].trim();
-        let values = s[open_parenthesis+1..close_parenthesis].split(',').map(|v| v.trim().parse::<u8>()).collect::<Result<Vec<u8>, _>>().map_err(|e| DmxError::InvalidDimmerValue(s.to_string()))?;
+        let values = s[open_parenthesis+1..close_parenthesis].split(',').map(|v| v.trim().parse::<u8>()).collect::<Result<Vec<u8>, _>>().map_err(|_| DmxError::InvalidDimmerValue(s.to_string()))?;
 
         match value_type.to_lowercase().as_str() {
             "s" if values.len() == 1 => Ok(DimmerValue::Single(values[0])),
@@ -134,7 +126,7 @@ impl TargetValue {
         match channel_type {
             ChannelType::Rgb => self.rgb.map(|(r,g,b)| DimmerValue::Rgb(r,g,b)),
             ChannelType::TriWhite => self.tri_white.map(|(w1,w2,w3)| DimmerValue::TriWhite(w1,w2,w3)),
-            ChannelType::Single => self.single.map(|s| DimmerValue::Single(s)),
+            ChannelType::Single => self.single.map(DimmerValue::Single),
         }
     }
 }

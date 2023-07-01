@@ -54,7 +54,7 @@ impl ArtnetManager {
     }
 
     fn remove_universe(&mut self, universe_id: &str) -> Result<(), DmxError> {
-         self.universes.remove(universe_id).ok_or(DmxError::InvalidUniverse(universe_id.to_string()))?;
+         self.universes.remove(universe_id).ok_or_else(|| DmxError::InvalidUniverse(universe_id.to_string()))?;
 
         let to_remove = self.controllers.iter().filter(|(_, c)| c.upgrade().is_none()).map(|(ip, _)| *ip).collect::<Vec<IpAddr>>();
         
