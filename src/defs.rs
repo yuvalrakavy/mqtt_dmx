@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::default;
 use std::net::IpAddr;
 use std::collections::HashMap;
 #[derive(Debug, Deserialize)]
@@ -65,8 +66,14 @@ pub struct DelayEffectNodeDefinition {
 }
 
 #[derive(Deserialize, Debug)]
+#[serde(untagged)]
+pub enum NumberOrVariable {
+    Number(u32),
+    Variable(String),
+}
+#[derive(Deserialize, Debug)]
 pub struct FadeEffectNodeDefinition {
     pub lights: String,
-    pub ticks: u32,
+    pub ticks: NumberOrVariable,
     pub target: String,
 }
