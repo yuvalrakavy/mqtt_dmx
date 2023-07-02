@@ -6,7 +6,7 @@ mod mqtt_subscriber;
 mod dmx;
 mod artnet_manager;
 mod array_manager;
-mod effect;
+mod effects_manager;
 mod messages;
 
 use rustop::opts;

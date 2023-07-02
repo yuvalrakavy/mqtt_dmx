@@ -40,6 +40,13 @@ pub struct TargetValue {
     pub tri_white: Option<(u8, u8, u8)>,
 }
 
+#[derive(Deserialize, Debug)]
+#[serde(untagged)]
+pub enum NumberOrVariable {
+    Number(usize),
+    Variable(String),
+}
+
 /// Effect modes
 #[derive(Deserialize, Debug)]
 #[serde(tag = "type")]
@@ -47,6 +54,7 @@ pub struct TargetValue {
 pub enum EffectNodeDefinition {
     Sequence(SequenceEffectNodeDefinition),
     Parallel(ParallelEffectNodeDefinition),
+    Delay(DelayEffectNodeDefinition),
     Fade(FadeEffectNodeDefinition),
 }
 
@@ -62,15 +70,9 @@ pub struct ParallelEffectNodeDefinition {
 
 #[derive(Deserialize, Debug)]
 pub struct DelayEffectNodeDefinition {
-    pub ticks: u32,
+    pub ticks: NumberOrVariable,
 }
 
-#[derive(Deserialize, Debug)]
-#[serde(untagged)]
-pub enum NumberOrVariable {
-    Number(u32),
-    Variable(String),
-}
 #[derive(Deserialize, Debug)]
 pub struct FadeEffectNodeDefinition {
     pub lights: String,

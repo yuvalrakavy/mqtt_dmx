@@ -51,4 +51,7 @@ pub enum DmxArrayError {
 
     #[error("Array '{0}' in universe '{1}': channel {2} is defined as {3} in group @{4} but is not included in @all group")]
     ArrayLightChannelNotInAllGroup(String, String, u16, ChannelUsage, String),
+
+    #[error("{0} {1}: {2}")]
+    ValueNotANumber(String, &'static str, String),
 }

@@ -13,6 +13,20 @@ pub struct Scope<'a> {
     pub values: Option<HashMap<String, String>>,
 }
 
+impl std::fmt::Display for Scope<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let array_description = self.array_manager.arrays.get(&self.array_id).map(|a| a.description.clone()).unwrap_or_else(|| "--UNDEFINED--".to_string());
+
+        write!(f, "Array '{}' ({})", self.array_id, array_description)?;
+
+        if let Some(preset_number) = self.preset_number {
+            write!(f, " preset# {}", preset_number)?;
+        }
+
+        Ok(())
+    }
+}
+
 impl Scope<'_> {
     pub fn new(array_manager: &ArrayManager, array_id: impl Into<String>, preset_number: Option<usize>, values: Option<HashMap<String, String>>) -> Result<Scope, DmxArrayError> {
         let array_id = array_id.into();
