@@ -94,3 +94,15 @@ impl ArrayManager {
     }
 
 }
+
+impl crate::defs::NumberOrVariable {
+    pub fn get_value(&self, scope: &Scope) -> Result<usize, DmxArrayError> {
+        match self {
+            crate::defs::NumberOrVariable::Number(n) => Ok(*n),
+            crate::defs::NumberOrVariable::Variable(s) => {
+                let value = scope.expand_values(s)?;
+                value.parse().map_err(|e: std::num::ParseIntError| DmxArrayError::ValueNotANumber(scope.to_string(),"ticks parameter",  e.to_string()))
+            }
+        }
+    }
+}
