@@ -5,7 +5,6 @@ mod verify;
 pub mod lights;
 mod scope;
 mod values;
-mod effect_nodes;
 mod effects;
 #[cfg(test)]
 mod tests;

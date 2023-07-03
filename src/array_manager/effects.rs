@@ -1,10 +1,24 @@
 
 use std::collections::HashMap;
 
-use super::ArrayManager;
+use crate::defs;
 use crate::defs::{EffectNodeDefinition, EffectUsage};
+
+use super::{ArrayManager, Scope};
 use super::error::DmxArrayError;
 use crate::effects_manager::EffectNodeRuntime;
+
+
+impl defs::EffectNodeDefinition {
+    pub fn get_runtime_node(&self, scope: &Scope) -> Result<Box<dyn EffectNodeRuntime>, DmxArrayError> {
+        match self {
+            defs::EffectNodeDefinition::Sequence(node) => node.get_runtime_node(scope),
+            defs::EffectNodeDefinition::Parallel(node) => node.get_runtime_node(scope),
+            &defs::EffectNodeDefinition::Fade(ref node) => node.get_runtime_node(scope),
+            &defs::EffectNodeDefinition::Delay(ref node) => node.get_runtime_node(scope),
+        }
+    }
+}
 
 impl ArrayManager {
     fn get_effect_definition(
