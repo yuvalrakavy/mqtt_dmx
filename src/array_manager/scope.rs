@@ -59,8 +59,4 @@ impl Scope<'_> {
     pub fn expand_values(&self, unexpanded_value: &str) -> Result<String, DmxArrayError> {
         self.array_manager.expand_values(self, unexpanded_value)
     }
-
-    pub fn get_dimmer_level(&self) -> u16 {
-        self.array_manager.get_array_dimmer_level(&self.array_id).unwrap()
-    }
 }

@@ -153,9 +153,4 @@ impl ArrayManager {
             self.get_array_all_lights(array_id)
         }
     }
-
-    pub fn get_array_dimmer_level(&self, array_id: &str) -> Result<u16, DmxArrayError> {
-        let array = self.get_array(array_id)?;
-        Ok(array.dimmer_level)
-    }
 }

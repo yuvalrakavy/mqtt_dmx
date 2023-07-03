@@ -1,4 +1,6 @@
 
+use crate::dmx::UniverseChannelDefinitions;
+use crate::defs::TargetValue;
 use super::EffectNodeRuntime;
 
 pub struct SequenceEffectNode {
@@ -55,7 +57,9 @@ impl EffectNodeRuntime for DelayEffectNode {
 }
 
 pub struct FadeEffectNode {
-
+    pub lights: Vec<UniverseChannelDefinitions>,
+    pub ticks: usize,
+    pub target: TargetValue,
 }
 
 impl EffectNodeRuntime for FadeEffectNode {

@@ -1,6 +1,7 @@
 
 use crate::defs;
 use crate::array_manager::scope::Scope;
+use crate::defs::TargetValue;
 use crate::effects_manager::runtime_nodes;
 use crate::effects_manager::EffectNodeRuntime;
 
@@ -10,7 +11,7 @@ use super::DmxArrayError;
 
 
 impl defs::EffectNodeDefinition {
-    fn get_runtime_node(&self, scope: &Scope) -> Result<Box<dyn EffectNodeRuntime>, DmxArrayError> {
+    pub fn get_runtime_node(&self, scope: &Scope) -> Result<Box<dyn EffectNodeRuntime>, DmxArrayError> {
         match self {
             defs::EffectNodeDefinition::Sequence(node) => node.get_runtime_node(scope),
             defs::EffectNodeDefinition::Parallel(node) => node.get_runtime_node(scope),
@@ -46,16 +47,24 @@ impl defs::DelayEffectNodeDefinition {
     fn get_runtime_node(&self, scope: &Scope) -> Result<Box<dyn EffectNodeRuntime>, DmxArrayError> {
 
         Ok(Box::new(runtime_nodes::DelayEffectNode {
-            ticks: self.ticks.get_value(scope)?,
+            ticks: self.ticks.get_value(scope, "delay ticks parameter")?,
             current_tick: 0,
         }))
     }
 }
 
 impl defs::FadeEffectNodeDefinition {
-    fn get_runtime_node(&self, context: &Scope) -> Result<Box<dyn EffectNodeRuntime>, DmxArrayError> {
-        Ok(Box::new(runtime_nodes::FadeEffectNode {
+    fn get_runtime_node(&self, scope: &Scope) -> Result<Box<dyn EffectNodeRuntime>, DmxArrayError> {
+        let lights_list = scope.expand_values(&self.lights)?;
+        let lights = scope.get_light_channels(&lights_list)?;
+        let ticks = self.ticks.get_value(scope, "fade ticks parameter")?;
+        let target  = scope.expand_values(&self.target)?.parse::<TargetValue>().
+            map_err(|e| DmxArrayError::ValueError(scope.to_string(), "fade target parameter", e.to_string()))?;
 
+        Ok(Box::new(runtime_nodes::FadeEffectNode {
+            lights,
+            ticks,
+            target,
         }))
     }
 }

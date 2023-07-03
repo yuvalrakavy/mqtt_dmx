@@ -1,5 +1,4 @@
 use serde::Deserialize;
-use std::default;
 use std::net::IpAddr;
 use std::collections::HashMap;
 #[derive(Debug, Deserialize)]
@@ -19,15 +18,29 @@ pub struct DmxArray {
     
     pub universe_id: String,        // Default universe to use
     pub lights: HashMap<String, String>,
+    #[serde(default="default_on_effect_id")]
+    pub on: String,
+    #[serde(default="default_off_effect_id")]
+    pub off: String,
+    #[serde(default)]
     pub effects: HashMap<String, EffectNodeDefinition>,
+    #[serde(default)]
     pub values: HashMap<String, String>,
+    #[serde(default)]
     pub presets: Vec<DmxArrayPreset>,
-    pub dimmer_level: u16,        // Dimming level (0-1000) maps to (0-100% brightness)
+}
+
+fn default_on_effect_id() -> String {
+    "on".to_string()
+}
+
+fn default_off_effect_id() -> String {
+    "off".to_string()
 }
 /// Dmx Array Preset
 #[derive(Debug, Deserialize)]
 pub struct DmxArrayPreset {
-    pub description: String,
+    #[serde(default)]
     pub values: HashMap<String, String>,
     pub on: Option<String>,
     pub off: Option<String>,
@@ -45,6 +58,12 @@ pub struct TargetValue {
 pub enum NumberOrVariable {
     Number(usize),
     Variable(String),
+}
+
+#[derive(Deserialize, Debug, Clone, Copy)]
+pub enum EffectUsage {
+    On,
+    Off,
 }
 
 /// Effect modes

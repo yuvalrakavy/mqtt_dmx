@@ -12,14 +12,38 @@ pub struct ArrayManager {
     pub(super) arrays: HashMap<String, DmxArray>,
     pub(super) effects: HashMap<String, EffectNodeDefinition>,
     pub(super) values: HashMap<String, String>,
+    pub(super) default_on_effect: EffectNodeDefinition,
+    pub(super) default_off_effect: EffectNodeDefinition,
 }
 
 impl ArrayManager {
     pub fn new() -> Self {
+        let default_on_json = r#"
+        {
+            "type": "fade",
+            "lights": "@all",
+            "ticks": "`default_ticks=10`",
+            "target": "`default_target=s(255);rgb(255,255,255);w(255,255,255)`"
+        }"#;
+        let default_off_json = r#"
+        {
+            "type": "fade",
+            "lights": "@all",
+            "ticks": "`default_ticks=10`",
+            "target": "`default_target=s(0);rgb(0,0,0);w(0,0,0)`"
+        }"#;
+
+        let default_on_effect =
+            serde_json::from_str::<EffectNodeDefinition>(default_on_json).unwrap();
+        let default_off_effect =
+            serde_json::from_str::<EffectNodeDefinition>(default_off_json).unwrap();
+
         Self {
             arrays: HashMap::new(),
             effects: HashMap::new(),
             values: HashMap::new(),
+            default_on_effect,
+            default_off_effect,
         }
     }
 
@@ -43,21 +67,6 @@ impl ArrayManager {
         self.arrays
             .get(array_id)
             .ok_or_else(|| DmxArrayError::ArrayNotFound(array_id.to_string()))
-    }
-
-    fn get_effect(
-        &self,
-        array_id: &str,
-        effect_id: &str,
-    ) -> Result<&EffectNodeDefinition, DmxArrayError> {
-        let array = self.get_array(array_id)?;
-        array
-            .effects
-            .get(effect_id)
-            .or_else(|| self.effects.get(effect_id))
-            .ok_or_else(|| {
-                DmxArrayError::EffectNotFound(array_id.to_string(), effect_id.to_string())
-            })
     }
 
     fn handle_message(&mut self, message: ToArrayManagerMessage) {

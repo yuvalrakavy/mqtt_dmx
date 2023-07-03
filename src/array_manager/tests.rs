@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use super::*;
 use crate::defs::DmxArray;
-use crate::dmx::{ChannelType, ChannelDefinition};
+use crate::dmx::{ChannelDefinition, ChannelType};
 
 #[test]
 fn test_verify_array() {
@@ -28,11 +28,8 @@ fn test_verify_array() {
                         "target": "s(0); rgb(0,0,0); w(0)"
                     }
                 },
-                "values": {
-                },
                 "presets": [
                     {
-                        "description": "preset1",
                         "values": {
                         }
                     }
@@ -76,7 +73,6 @@ fn test_verify_array() {
                 },
                 "presets": [
                     {
-                        "description": "preset1",
                         "on": "custom",
                         "values": {
                         }
@@ -114,7 +110,6 @@ fn test_verify_array() {
                 },
                 "presets": [
                     {
-                        "description": "preset1",
                         "on": "custom",
                         "values": {
                         }
@@ -160,7 +155,6 @@ fn test_verify_array() {
                 },
                 "presets": [
                     {
-                        "description": "preset1",
                         "off": "custom",
                         "values": {
                         }
@@ -204,11 +198,7 @@ fn test_verify_array() {
                         "ticks": 10,
                         "target": "s(0); rgb(0,0,0); w(0)"
                     }
-                },
-                "values": {
-                },
-                "presets": [
-                ]
+                }
             }"#;
 
     let array = serde_json::from_str::<DmxArray>(array_json).unwrap();
@@ -240,11 +230,7 @@ fn test_verify_array() {
                         "ticks": 10,
                         "target": "s(0); rgb(0,0,0); w(0)"
                     }
-                },
-                "values": {
-                },
-                "presets": [
-                ]
+                }
             }"#;
 
     let array = serde_json::from_str::<DmxArray>(array_json).unwrap();
@@ -275,11 +261,7 @@ fn test_verify_array() {
                         "ticks": 10,
                         "target": "s(0); rgb(0,0,0); w(0)"
                     }
-                },
-                "values": {
-                },
-                "presets": [
-                ]
+                }
             }"#;
 
     let array = serde_json::from_str::<DmxArray>(array_json).unwrap();
@@ -534,4 +516,71 @@ fn test_expand_values() {
             "Array 'test' 'hello `NONE world' has unterminated `value` expression"
         );
     }
+}
+
+#[test]
+fn test_effect_management() {
+    use crate::defs;
+    let mut array_manager = ArrayManager::new();
+
+    let array_json = r#"
+            {
+                "universe_id": "0",
+                "description": "Test array",
+                "lights": {
+                    "all": "rgb:0"
+                }
+            }"#;
+
+    let array = serde_json::from_str::<DmxArray>(array_json).unwrap();
+    array_manager.add_array("test".to_string(), array).unwrap();
+
+    let on_effect = array_manager.get_usage_effect_definition(&defs::EffectUsage::On, "test", None).unwrap();
+    let t = format!("{:?}", on_effect);
+    assert_eq!(t, r#"Fade(FadeEffectNodeDefinition { lights: "@all", ticks: Variable("`default_ticks=10`"), target: "`default_target=s(255);rgb(255,255,255);w(255,255,255)`" })"#);
+
+    let _ = array_manager.get_usage_effect_runtime(&defs::EffectUsage::On, "test", None, None).unwrap();
+
+    let array_json = r#"
+            {
+                "universe_id": "0",
+                "description": "Test array",
+                "lights": {
+                    "all": "rgb:0"
+                },
+                "effects": {
+                    "simple_on": {
+                        "type": "sequence",
+                        "nodes": [
+                            {
+                                "type": "fade",
+                                "lights": "@all",
+                                "ticks": 10,
+                                "target": "s(20); rgb(20,20,20); w(100, 20, 30)"
+                            },
+                            {
+                                "type": "delay",
+                                "ticks": 10
+                            },
+                            {
+                                "type": "fade",
+                                "lights": "@all",
+                                "ticks": 10,
+                                "target": "s(255); rgb(255,255,255); w(255, 255, 255)"
+                            }
+                        ]
+                    }
+                },
+                "presets": [
+                    {
+                        "description": "Test preset",
+                        "on": "simple_on"
+                    }
+                ]
+            }"#;
+
+    let array = serde_json::from_str::<DmxArray>(array_json).unwrap();
+    array_manager.add_array("test".to_string(), array).unwrap();
+
+    let _ = array_manager.get_usage_effect_runtime(&defs::EffectUsage::On, "test", Some(0), None).unwrap();
 }

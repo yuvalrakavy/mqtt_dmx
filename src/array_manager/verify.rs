@@ -44,21 +44,6 @@ impl ArrayManager {
             array.effects.get(effect_name).is_some() || self.effects.get(effect_name).is_some()
         };
 
-        let has_on_effect = array
-            .effects
-            .get("on")
-            .or_else(|| self.effects.get("on"))
-            .is_some();
-        let has_off_effect = array
-            .effects
-            .get("off")
-            .or_else(|| self.effects.get("off"))
-            .is_some();
-
-        if array.presets.is_empty() && !has_on_effect && !has_off_effect {
-            return Err(DmxArrayError::ArrayNoDefaultEffects(array_id.to_string()));
-        }
-
         for (preset_number, preset) in array.presets.iter().enumerate() {
             if let Some(ref effect_name) = preset.on {
                 if !has_effect(effect_name) {
@@ -69,12 +54,6 @@ impl ArrayManager {
                         effect_name.to_string(),
                     ));
                 }
-            } else if !has_on_effect {
-                return Err(DmxArrayError::ArrayPresetDefaultEffectNotFound(
-                    array_id.to_string(),
-                    preset_number,
-                    "on",
-                ));
             }
 
             if let Some(ref effect_name) = preset.off {
@@ -86,12 +65,6 @@ impl ArrayManager {
                         effect_name.to_string(),
                     ));
                 }
-            } else if !has_on_effect {
-                return Err(DmxArrayError::ArrayPresetDefaultEffectNotFound(
-                    array_id.to_string(),
-                    preset_number,
-                    "off",
-                ));
             }
         }
 
@@ -169,4 +142,23 @@ impl ArrayManager {
 
         Ok(())
     }
+
+    // pub (super) fn verify_effects(&self, array_id: Option<&str>) -> Result<(), DmxArrayError> {
+    //     let (effects, description) = if let Some(array_id) = array_id {
+    //         if let Some(array) = self.arrays.get(array_id) {
+    //             (&array.effects, format!("array {} ({})", array_id, array.description))
+    //         } else {
+    //             return Err(DmxArrayError::ArrayNotFound(array_id.to_string()));
+    //         }
+    //     } else {
+    //         (&self.effects, "global".to_string())
+    //     };
+
+    //     let scope = Scope::new(&self, array_id, 
+    //     for (effect_name, effect) in effects.iter() {
+    //         _ =  effect.get_runtime_node()?;
+    //     }
+
+    //     Ok(())
+    // }
 }

@@ -53,5 +53,11 @@ pub enum DmxArrayError {
     ArrayLightChannelNotInAllGroup(String, String, u16, ChannelUsage, String),
 
     #[error("{0} {1}: {2}")]
-    ValueNotANumber(String, &'static str, String),
+    ValueError(String, &'static str, String),
+
+    #[error("{0} {1}: {2}")]
+    InvalidFadeTargetValue(String, &'static str, String),
+
+    #[error("'{0}' error in effect {1}: '{2}'")]
+    InvalidEffectError(String, String, String),
 }
