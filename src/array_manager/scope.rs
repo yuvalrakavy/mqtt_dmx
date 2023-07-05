@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use super::manager::ArrayManager;
 use super::DmxArrayError;
 use crate::dmx::UniverseChannelDefinitions;
+use crate::defs::DimmingAmount;
 
 #[derive(Debug)]
 pub struct Scope<'a> {
@@ -11,6 +12,7 @@ pub struct Scope<'a> {
     pub array_id: String,
     pub preset_number: Option<usize>,
     pub values: Option<HashMap<String, String>>,
+    pub dimming_amount: DimmingAmount,
 }
 
 impl std::fmt::Display for Scope<'_> {
@@ -28,7 +30,7 @@ impl std::fmt::Display for Scope<'_> {
 }
 
 impl Scope<'_> {
-    pub fn new(array_manager: &ArrayManager, array_id: impl Into<String>, preset_number: Option<usize>, values: Option<HashMap<String, String>>) -> Result<Scope, DmxArrayError> {
+    pub fn new(array_manager: &ArrayManager, array_id: impl Into<String>, preset_number: Option<usize>, values: Option<HashMap<String, String>>, dimming_amount: DimmingAmount) -> Result<Scope, DmxArrayError> {
         let array_id = array_id.into();
         let array = array_manager.arrays.get(&array_id);
 
@@ -49,6 +51,7 @@ impl Scope<'_> {
             array_id,
             preset_number,
             values,
+            dimming_amount,
         })
     }
 

@@ -79,10 +79,6 @@ impl ArrayManager {
                 reply_tx.send(self.remove_array(array_id)).unwrap()
             }
 
-            ToArrayManagerMessage::GetLightChannels(array_id, lights_list, reply_tx) => reply_tx
-                .send(self.get_array_light_channels(&array_id, &lights_list))
-                .unwrap(),
-
             ToArrayManagerMessage::AddValues(values, reply_tx) => {
                 reply_tx.send(self.add_values(values)).unwrap()
             }

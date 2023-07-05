@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use super::*;
-use crate::defs::DmxArray;
+use crate::defs::{DmxArray, DIMMING_AMOUNT_MAX};
 use crate::dmx::{ChannelDefinition, ChannelType};
 
 #[test]
@@ -380,7 +380,7 @@ fn test_get_array_light_channels() {
 
     let array = serde_json::from_str::<DmxArray>(array_json).unwrap();
     array_manager.add_array("test".to_string(), array).unwrap();
-    let scope = Scope::new(&array_manager, "test", None, None).unwrap();
+    let scope = Scope::new(&array_manager, "test", None, None, DIMMING_AMOUNT_MAX).unwrap();
 
     let result = scope.get_light_channels("@all").unwrap();
     let u0 = if result[0].universe_id == "0" { 0 } else { 1 };
@@ -468,7 +468,7 @@ fn test_expand_values() {
     let array = serde_json::from_str::<DmxArray>(array_json).unwrap();
     array_manager.add_array("test".to_string(), array).unwrap();
 
-    let scope = Scope::new(&array_manager, "test", None, None).unwrap();
+    let scope = Scope::new(&array_manager, "test", None, None, DIMMING_AMOUNT_MAX).unwrap();
     let result = scope.expand_values("hello `test` world").unwrap();
     assert_eq!(result, "hello test-array-value world");
 
@@ -477,7 +477,7 @@ fn test_expand_values() {
         .unwrap();
     assert_eq!(result, "hello default world");
 
-    let scope = Scope::new(&&array_manager, "test", Some(0), None).unwrap();
+    let scope = Scope::new(&&array_manager, "test", Some(0), None, DIMMING_AMOUNT_MAX).unwrap();
     let result = scope.expand_values("hello `test2` world").unwrap();
     assert_eq!(result, "hello test2-preset-value world");
 
@@ -488,7 +488,7 @@ fn test_expand_values() {
         Some(HashMap::from([(
             "test".to_string(),
             "test-local-value".to_string(),
-        )])),
+        )])), DIMMING_AMOUNT_MAX
     )
     .unwrap();
 
@@ -539,7 +539,7 @@ fn test_effect_management() {
     let t = format!("{:?}", on_effect);
     assert_eq!(t, r#"Fade(FadeEffectNodeDefinition { lights: "@all", ticks: Variable("`default_ticks=10`"), target: "`default_target=s(255);rgb(255,255,255);w(255,255,255)`" })"#);
 
-    let _ = array_manager.get_usage_effect_runtime(&defs::EffectUsage::On, "test", None, None).unwrap();
+    let _ = array_manager.get_usage_effect_runtime(&defs::EffectUsage::On, "test", None, None, DIMMING_AMOUNT_MAX).unwrap();
 
     let array_json = r#"
             {
@@ -582,5 +582,12 @@ fn test_effect_management() {
     let array = serde_json::from_str::<DmxArray>(array_json).unwrap();
     array_manager.add_array("test".to_string(), array).unwrap();
 
-    let _ = array_manager.get_usage_effect_runtime(&defs::EffectUsage::On, "test", Some(0), None).unwrap();
+    let d = array_manager.get_usage_effect_runtime(&defs::EffectUsage::On, "test", Some(0), None, DIMMING_AMOUNT_MAX).unwrap();
+    let t = format!("{:?}", d);
+    println!("{}", t);
+
+    let d = array_manager.get_usage_effect_runtime(&defs::EffectUsage::On, "test", Some(0), None, 500).unwrap();
+    let t = format!("{:?}", d);
+    println!("{}", t);
+
 }

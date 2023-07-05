@@ -1,7 +1,9 @@
 use serde::Deserialize;
 use std::net::IpAddr;
 use std::collections::HashMap;
-#[derive(Debug, Deserialize)]
+use std::fmt::Debug;
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct UniverseDefinition {
     pub description: String,
 
@@ -11,6 +13,9 @@ pub struct UniverseDefinition {
     pub universe: u8,
     pub channels: u16,
 }
+
+pub type DimmingAmount = usize;
+pub const DIMMING_AMOUNT_MAX: DimmingAmount = 1000;
 
 #[derive(Debug, Deserialize)]
 pub struct DmxArray {
@@ -67,6 +72,7 @@ pub enum EffectUsage {
 }
 
 /// Effect modes
+
 #[derive(Deserialize, Debug)]
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]

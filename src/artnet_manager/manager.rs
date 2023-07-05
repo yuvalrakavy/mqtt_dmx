@@ -1,11 +1,9 @@
-use std::net::{IpAddr, UdpSocket};
-use std::collections::HashMap;
-use std::iter::repeat;
-use std::sync::{Weak, Arc};
+use std::{net::{IpAddr, UdpSocket}, collections::HashMap, iter::repeat, fmt::Debug, mem, sync::{Weak, Arc}};
 use tokio::{select, sync::mpsc::Receiver};
 use tokio_util::sync::CancellationToken;
 use log::info;
 
+use super::ArtnetError;
 use crate::{defs::UniverseDefinition, dmx::*, messages::ToArtnetManagerMessage};
 
 struct ArtnetController {
@@ -19,9 +17,15 @@ struct Universe {
     packet_bytes: Vec<u8>,
 }
 
+pub trait EffectNodeRuntime : Debug + Send {
+    fn tick(&mut self, artnet_manager: &mut ArtnetManager) -> Result<(), ArtnetError>;
+    fn is_done(&self) -> bool;
+}
+
 pub struct ArtnetManager {
     universes: HashMap<String, Universe>,
     controllers: HashMap<IpAddr, Weak<ArtnetController>>,
+    active_effects: HashMap<String, Box<dyn EffectNodeRuntime>>,
 }
 
 const DMX_DATA_OFFSET: usize = 18;
@@ -34,10 +38,11 @@ impl ArtnetManager {
         ArtnetManager {
             universes: HashMap::new(),
             controllers: HashMap::new(),
+            active_effects: HashMap::new(),
         }
     }
 
-    fn add_universe(&mut self, universe_id: &str, definition: UniverseDefinition) -> Result<(), DmxError> {
+    fn add_universe(&mut self, universe_id: &str, definition: UniverseDefinition) -> Result<(), ArtnetError> {
         let controller = match self.controllers.get(&definition.controller) {
             Some(c) => c.upgrade().unwrap(),
             None => {
@@ -53,8 +58,8 @@ impl ArtnetManager {
         Ok(())
     }
 
-    fn remove_universe(&mut self, universe_id: &str) -> Result<(), DmxError> {
-         self.universes.remove(universe_id).ok_or_else(|| DmxError::InvalidUniverse(universe_id.to_string()))?;
+    fn remove_universe(&mut self, universe_id: &str) -> Result<(), ArtnetError> {
+         self.universes.remove(universe_id).ok_or_else(|| ArtnetError::InvalidUniverse(universe_id.to_string()))?;
 
         let to_remove = self.controllers.iter().filter(|(_, c)| c.upgrade().is_none()).map(|(ip, _)| *ip).collect::<Vec<IpAddr>>();
         
@@ -65,39 +70,61 @@ impl ArtnetManager {
         Ok(())
     }
 
-    fn set_channel(&mut self, universe_id: &str, v: &ChannelValue) -> Result<(), DmxError> {
+    fn start_effect(&mut self, effect_id: &str, effect: Box<dyn EffectNodeRuntime>) -> Result<(), ArtnetError> {
+        self.active_effects.insert(effect_id.to_owned(), effect);
+        Ok(())
+    }
+
+    fn stop_effect(&mut self, effect_id: &str) -> Result<(), ArtnetError> {
+        self.active_effects.remove(effect_id);
+        Ok(())
+    }
+
+    fn tick(&mut self) -> Result<(), ArtnetError> {
+        let mut active_effects = mem::take(&mut self.active_effects);
+
+        for (_, effect) in active_effects.iter_mut() {
+            effect.tick(self)?;
+        }
+
+        self.active_effects = active_effects;       // Move it back
+        Ok(())
+    }
+
+    pub fn set_channel(&mut self, universe_id: &str, v: &ChannelValue) -> Result<(), ArtnetError> {
         match self.universes.get_mut(universe_id) {
             Some(u) => u.set_channel(v),
-            None => Err(DmxError::InvalidUniverse(universe_id.to_string())),
+            None => Err(ArtnetError::InvalidUniverse(universe_id.to_string())),
         }
     }
 
-    fn set_channels(&mut self, universe_id: &str, channel_value_list: &Vec<ChannelValue>) -> Result<(), DmxError> {
+    fn set_channels(&mut self, universe_id: &str, channel_value_list: &Vec<ChannelValue>) -> Result<(), ArtnetError> {
         for channel_value in channel_value_list {
             self.set_channel(universe_id, channel_value)?;
         }
         Ok(())
     }
 
-    fn get_channel(&self, universe_id: &str, channel_definition: &ChannelDefinition) -> Result<ChannelValue, DmxError> {
+    pub fn get_channel(&self, universe_id: &str, channel_definition: &ChannelDefinition) -> Result<ChannelValue, ArtnetError> {
         match self.universes.get(universe_id) {
             Some(u) => u.get_channel(channel_definition),
-            None => Err(DmxError::InvalidUniverse(universe_id.to_string())),
+            None => Err(ArtnetError::InvalidUniverse(universe_id.to_string())),
         }
     }
 
-    fn get_channels(&self, universe_id: &str, channel_definitions: &Vec<ChannelDefinition>) -> Result<Vec<ChannelValue>, DmxError> {
+    fn get_channels(&self, universe_id: &str, channel_definitions: &Vec<ChannelDefinition>) -> Result<Vec<ChannelValue>, ArtnetError> {
         let mut channel_values = Vec::new();
+
         for channel_definition in channel_definitions {
             channel_values.push(self.get_channel(universe_id, channel_definition)?);
         }
         Ok(channel_values)
     }
 
-    fn send(&mut self, universe_id: &str) -> Result<(), DmxError> {
+    fn send(&mut self, universe_id: &str) -> Result<(), ArtnetError> {
         match self.universes.get_mut(universe_id) {
             Some(u) => u.send(),
-            None => Err(DmxError::InvalidUniverse(universe_id.to_string())),
+            None => Err(ArtnetError::InvalidUniverse(universe_id.to_string())),
         }
     }
 
@@ -137,7 +164,7 @@ impl ArtnetManager {
 }
 
 impl ArtnetController {
-    pub fn new(controller: &IpAddr) -> Result<ArtnetController, DmxError> {
+    pub fn new(controller: &IpAddr) -> Result<ArtnetController, ArtnetError> {
         let socket = UdpSocket::bind("0.0.0.0:0")?;
         socket.connect((*controller, DMX_UDP_PORT))?;
 
@@ -146,25 +173,25 @@ impl ArtnetController {
         })
     }
 
-    pub fn send(&self, packet_bytes: &[u8]) -> Result<(), DmxError> {
+    pub fn send(&self, packet_bytes: &[u8]) -> Result<(), ArtnetError> {
         self.socket.send(packet_bytes)?;
         Ok(())
     }   
 }
 
 impl Universe {
-    pub fn new(controller: Arc<ArtnetController>, universe_id: &str, definition: UniverseDefinition) -> Result<Universe, DmxError> {
+    pub fn new(controller: Arc<ArtnetController>, universe_id: &str, definition: UniverseDefinition) -> Result<Universe, ArtnetError> {
         if definition.universe > 15 {
-            return Err(DmxError::InvalidUniverseNumber(definition.universe));
+            return Err(ArtnetError::InvalidUniverseNumber(definition.universe));
         }
         if definition.subnet > 15 {
-            return Err(DmxError::InvalidSubnet(definition.subnet));
+            return Err(ArtnetError::InvalidSubnet(definition.subnet));
         }
         if definition.net > 127 {
-            return Err(DmxError::InvalidNet(definition.net));
+            return Err(ArtnetError::InvalidNet(definition.net));
         }
         if definition.channels > 512 {
-            return Err(DmxError::TooManyChannels(definition.channels));
+            return Err(ArtnetError::TooManyChannels(definition.channels));
         }
 
         let channel_count = (definition.channels + 1) as usize & !1;        // Round up to even number of channels
@@ -201,7 +228,7 @@ impl Universe {
         (self.packet_bytes.len() - DMX_DATA_OFFSET) as u16
     }
 
-    pub fn set_channel(&mut self, v: &ChannelValue) -> Result<(), DmxError> {
+    pub fn set_channel(&mut self, v: &ChannelValue) -> Result<(), ArtnetError> {
         let value_bytes = match v.value {
             DimmerValue::Rgb(_, _, _) => 3,
             DimmerValue::TriWhite(_, _, _) => 3,
@@ -209,7 +236,7 @@ impl Universe {
         };
 
         if DMX_DATA_OFFSET + v.channel as usize + value_bytes > self.packet_bytes.len() {
-            return Err(DmxError::InvalidChannel(self.description.clone(), v.channel, self.get_channel_count()));
+            return Err(ArtnetError::InvalidChannel(self.description.clone(), v.channel, self.get_channel_count()));
         }
 
         let offset = DMX_DATA_OFFSET + v.channel as usize;
@@ -233,7 +260,7 @@ impl Universe {
         Ok(())
     }
 
-    pub fn get_channel(&self, channel_definition: &ChannelDefinition) -> Result<ChannelValue, DmxError> {
+    pub fn get_channel(&self, channel_definition: &ChannelDefinition) -> Result<ChannelValue, ArtnetError> {
         let value_bytes = match channel_definition.channel_type {
             ChannelType::Rgb => 3,
             ChannelType::TriWhite => 3,
@@ -241,7 +268,7 @@ impl Universe {
         };
 
         if DMX_DATA_OFFSET + channel_definition.channel as usize + value_bytes > self.packet_bytes.len() {
-            return Err(DmxError::InvalidChannel(self.description.clone(), channel_definition.channel, self.get_channel_count()));
+            return Err(ArtnetError::InvalidChannel(self.description.clone(), channel_definition.channel, self.get_channel_count()));
         }
 
         let offset = DMX_DATA_OFFSET + channel_definition.channel as usize;
@@ -268,7 +295,7 @@ impl Universe {
         }
     }
 
-    pub fn send(&mut self) -> Result<(), DmxError> {
+    pub fn send(&mut self) -> Result<(), ArtnetError> {
         self.controller.send(self.packet_bytes.as_slice())?;
         self.packet_bytes[DMX_SEQ_OFFSET] += 1;
         Ok(())
@@ -379,7 +406,7 @@ mod test_universe {
         let result = universe.set_channel(&channel_value);
 
         match result {
-            Err(DmxError::InvalidChannel(d, 305, 306)) if d == "test" => {},
+            Err(ArtnetError::InvalidChannel(d, 305, 306)) if d == "test (Test Universe)" => {},
             _ => panic!("Expected InvalidChannel error, got {:?}", result),
         }
     }
@@ -392,7 +419,7 @@ mod test_universe {
         let result = universe.get_channel(&ChannelDefinition { channel: 305, channel_type: ChannelType::Rgb});
 
         match result {
-            Err(DmxError::InvalidChannel(d, 305, 306)) if d == "test" => {},
+            Err(ArtnetError::InvalidChannel(d, 305, 306)) if d == "test (Test Universe)" => {},
             _ => panic!("Expected InvalidChannel error, got {:?}", result),
         }
     }

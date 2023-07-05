@@ -1,12 +1,12 @@
 
 use std::collections::HashMap;
 
-use crate::defs;
+use crate::defs::{self, DimmingAmount};
 use crate::defs::{EffectNodeDefinition, EffectUsage};
 
 use super::{ArrayManager, Scope};
 use super::error::DmxArrayError;
-use crate::effects_manager::EffectNodeRuntime;
+use crate::artnet_manager::EffectNodeRuntime;
 
 
 impl defs::EffectNodeDefinition {
@@ -74,7 +74,6 @@ impl ArrayManager {
         preset_number: Option<usize>,
     ) -> Result<&EffectNodeDefinition, DmxArrayError> {
         let effect_id = self.get_usage_effect_id(&usage, array_id, preset_number)?;
-        let x = self.get_effect_definition(array_id, &effect_id)?;
 
         Ok(self
             .get_effect_definition(array_id, &effect_id)?
@@ -90,9 +89,10 @@ impl ArrayManager {
         array_id: &str,
         preset_number: Option<usize>,
         values: Option<HashMap<String, String>>,
+        dimming_amount: DimmingAmount,
     ) -> Result<Box<dyn EffectNodeRuntime>, DmxArrayError> {
         let effect_definition = self.get_usage_effect_definition(usage, array_id, preset_number)?;
-        let scope = super::Scope::new(self, array_id, preset_number, values)?;
+        let scope = super::Scope::new(self, array_id, preset_number, values, dimming_amount)?;
 
         effect_definition.get_runtime_node(&scope)
     }

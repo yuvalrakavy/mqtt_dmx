@@ -1,5 +1,5 @@
-use std::collections::HashMap;
-use tokio::{select, sync::{oneshot, mpsc::Sender}};
+use std::{collections::HashMap};
+use tokio::{select, join, sync::{oneshot, mpsc::Sender}};
 use tokio_util::sync::CancellationToken;
 use log::{error, info};
 use bytes::Bytes;
@@ -8,7 +8,7 @@ use thiserror::Error;
 
 
 
-use crate::{dmx::DmxError, array_manager::DmxArrayError, defs::UniverseDefinition, messages, defs};
+use crate::{artnet_manager::ArtnetError, array_manager::DmxArrayError, defs::UniverseDefinition, messages, defs};
 
 
 #[derive(Debug, Error)]
@@ -25,8 +25,8 @@ enum MqttMessageError {
     #[error("Missing Array ID in DMX topic: '{0}'")]
     MissingArrayId(String),
 
-    #[error("Universe error: {0}")]
-    UniverseOperationError(#[from] DmxError),
+    #[error("Artnet error: {0}")]
+    UniverseOperationError(#[from] ArtnetError),
 
     #[error("DMX Array/Values error: {0}")]
     ArrayOperationError(#[from] DmxArrayError),
@@ -36,19 +36,19 @@ enum MqttMessageError {
 }
 
 struct MqttSubscriber {
-    to_dmx_tx: Sender<messages::ToArtnetManagerMessage>,
+    to_artnet_tx: Sender<messages::ToArtnetManagerMessage>,
     to_array_tx: Sender<messages::ToArrayManagerMessage>,
     to_mqtt_publisher_tx: Sender<messages::ToMqttPublisherMessage>,
 }
 
 pub async fn run(cancelled: CancellationToken, mut event_loop: EventLoop, 
-    to_dmx_tx: Sender<messages::ToArtnetManagerMessage>,
+    to_artnet_tx: Sender<messages::ToArtnetManagerMessage>,
     to_array_tx: Sender<messages::ToArrayManagerMessage>,
     to_mqtt_publisher_tx: Sender<messages::ToMqttPublisherMessage>) {
     info!("Starting MQTT subscriber worker");
 
     let mqtt_subscriber = MqttSubscriber {
-        to_dmx_tx,
+        to_artnet_tx,
         to_array_tx,
         to_mqtt_publisher_tx,
     };
@@ -123,22 +123,22 @@ impl MqttSubscriber {
     async fn handle_universe_message(&self, universe_id: &str, payload: &Bytes) -> Result<(), MqttMessageError> {
         // If no payload is given, remove the universe
         if payload.is_empty() {
-            let (tx, rx) = oneshot::channel::<Result<(), DmxError>>();
+            let (tx_artnet_reply, rx_artnet_reply) = oneshot::channel::<Result<(), ArtnetError>>();
 
-            self.to_dmx_tx.send(messages::ToArtnetManagerMessage::RemoveUniverse(universe_id.to_string(), tx)).await.unwrap();
+            self.to_artnet_tx.send(messages::ToArtnetManagerMessage::RemoveUniverse(universe_id.to_string(), tx_artnet_reply)).await.unwrap();
 
-            if let Err(e) = rx.await.unwrap() {
+            if let Err(e) = rx_artnet_reply.await.unwrap() {
                 return Err(MqttMessageError::UniverseOperationError(e))
             }
         }
         else {
             match serde_json::from_slice::<UniverseDefinition>(payload) {
                 Ok(definition) => {
-                    let (tx, rx) = oneshot::channel::<Result<(), DmxError>>();
+                    let (tx_artnet_reply, rx_artnet_reply) = oneshot::channel::<Result<(), ArtnetError>>();
 
-                    self.to_dmx_tx.send(messages::ToArtnetManagerMessage::AddUniverse(universe_id.to_string(), definition, tx)).await.unwrap();
+                    self.to_artnet_tx.send(messages::ToArtnetManagerMessage::AddUniverse(universe_id.to_string(), definition, tx_artnet_reply)).await.unwrap();
 
-                    if let Err(e) = rx.await.unwrap() {
+                    if let Err(e) = rx_artnet_reply.await.unwrap() {
                         return Err(MqttMessageError::UniverseOperationError(e))
                     }
                 },

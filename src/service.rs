@@ -4,7 +4,7 @@ use tokio_util::sync::CancellationToken;
 use rumqttc::{AsyncClient, EventLoop, MqttOptions, LastWill, QoS};
 use log::info;
 
-use crate::{messages, artnet_manager::ArtnetManager, mqtt_publisher, mqtt_subscriber, array_manager};
+use crate::{messages, mqtt_publisher, mqtt_subscriber, array_manager, artnet_manager::ArtnetManager};
 
 pub struct Started {}    
 pub struct Stopped {}
@@ -54,16 +54,15 @@ impl Service<Stopped> {
             Service::connect_to_mqtt_broker(&self.config.mqtt_broker_address).await;
 
         // Create the channels for the workers
-        let (to_dmx_tx, to_dmx_rx) = tokio::sync::mpsc::channel::<messages::ToArtnetManagerMessage>(10);
+        let (to_artnet_tx, to_artnet_rx) = tokio::sync::mpsc::channel::<messages::ToArtnetManagerMessage>(10);
         let (to_array_tx, to_array_rx) = tokio::sync::mpsc::channel::<messages::ToArrayManagerMessage>(10);
-
 
         // Create Artnet manager worker
         let cancel_instance = cancel.clone();
         self.workers.spawn(async move {
-            let mut dmx_manager = ArtnetManager::new();
+            let mut artnet_manager = ArtnetManager::new();
 
-            dmx_manager.run(cancel_instance, to_dmx_rx).await;
+            artnet_manager.run(cancel_instance, to_artnet_rx).await;
         });
 
         // Create array manager worker
@@ -84,12 +83,12 @@ impl Service<Stopped> {
         });
 
         // Create mqtt subscriber worker
-        let to_dmx_tx_instance = to_dmx_tx.clone();
+        let to_artnet_tx_instance = to_artnet_tx.clone();
         let to_array_tx_instance = to_array_tx.clone();
         let cancel_instance = cancel.clone();
 
         self.workers.spawn(async move {
-            mqtt_subscriber::run(cancel_instance, mqtt_event_loop, to_dmx_tx_instance, to_array_tx_instance, to_mqtt_publisher_tx_instance).await;
+            mqtt_subscriber::run(cancel_instance, mqtt_event_loop, to_artnet_tx_instance, to_array_tx_instance, to_mqtt_publisher_tx_instance).await;
         });
 
         // Create DMX refresh worker

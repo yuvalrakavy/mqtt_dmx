@@ -2,20 +2,20 @@ use std::collections::HashMap;
 
 use tokio::sync::oneshot::Sender;
 use crate::defs;
-use crate::{dmx, dmx::DmxError, array_manager::DmxArrayError};
+use crate::{dmx, artnet_manager::ArtnetError, array_manager::DmxArrayError};
 
 
 #[derive(Debug)]
 pub enum ToArtnetManagerMessage {
-    AddUniverse(String, defs::UniverseDefinition, Sender<Result<(), DmxError>>),
-    RemoveUniverse(String, Sender<Result<(), DmxError>>),
+    AddUniverse(String, defs::UniverseDefinition, Sender<Result<(), ArtnetError>>),
+    RemoveUniverse(String, Sender<Result<(), ArtnetError>>),
 
-    SetChannel(String, dmx::ChannelValue, Sender<Result<(), DmxError>>),
-    GetChannel(String, dmx::ChannelDefinition, Sender<Result<dmx::ChannelValue, DmxError>>),
-    SetChannels(String, Vec<dmx::ChannelValue>, Sender<Result<(), DmxError>>),
-    GetChannels(String, Vec<dmx::ChannelDefinition>, Sender<Result<Vec<dmx::ChannelValue>, DmxError>>),
+    SetChannel(String, dmx::ChannelValue, Sender<Result<(), ArtnetError>>),
+    GetChannel(String, dmx::ChannelDefinition, Sender<Result<dmx::ChannelValue, ArtnetError>>),
+    SetChannels(String, Vec<dmx::ChannelValue>, Sender<Result<(), ArtnetError>>),
+    GetChannels(String, Vec<dmx::ChannelDefinition>, Sender<Result<Vec<dmx::ChannelValue>, ArtnetError>>),
 
-    Send(String, Sender<Result<(), DmxError>>),
+    Send(String, Sender<Result<(), ArtnetError>>),
 }
 
 #[derive(Debug)]
@@ -30,6 +30,4 @@ pub enum ToArrayManagerMessage {
 
     AddValues(HashMap<String, String>, Sender<Result<(), DmxArrayError>>),
     RemoveValues(Sender<Result<(), DmxArrayError>>),
-
-    GetLightChannels(String, String, Sender<Result<Vec<dmx::UniverseChannelDefinitions>, DmxArrayError>>),
 }
