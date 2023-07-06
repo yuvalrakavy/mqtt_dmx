@@ -28,24 +28,6 @@ pub enum DimmerValue {
     Single(u8),
 }
 
-impl DimmerValue {
-    pub fn get_dimmed_value(&self, dimming_amount: DimmingAmount) -> DimmerValue {
-        match self {
-            DimmerValue::Rgb(r, g, b) => DimmerValue::Rgb(
-                (*r as usize * dimming_amount / 1000) as u8,
-                (*g as usize * dimming_amount / 1000) as u8,
-                (*b as usize * dimming_amount / 1000) as u8,
-            ),
-            DimmerValue::TriWhite(w1, w2, w3) => DimmerValue::TriWhite(
-                (*w1 as usize * dimming_amount / 1000) as u8,
-                (*w2 as usize * dimming_amount / 1000) as u8,
-                (*w3 as usize * dimming_amount / 1000) as u8,
-            ),
-            DimmerValue::Single(v) => DimmerValue::Single((*v as usize * dimming_amount / 1000) as u8),
-        }
-    }
-}
-
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ChannelValue {
     pub channel: u16,
@@ -126,6 +108,7 @@ impl FromStr for ChannelDefinition {
 }
 
 impl TargetValue {
+    #[cfg(test)]
     pub fn get(&self, channel_type: ChannelType) -> Option<DimmerValue> {
         match channel_type {
             ChannelType::Rgb => self.rgb.map(|(r, g, b)| DimmerValue::Rgb(r, g, b)),

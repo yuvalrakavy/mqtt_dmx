@@ -116,3 +116,8 @@ pub struct OnOffCommandParameters {
     pub values: Option<HashMap<String, String>>,
     pub dimming_amount: Option<DimmingAmount>,
 }
+
+#[derive(Deserialize, Debug)]
+pub struct StopCommandParameters {
+    pub array_id: String,
+}

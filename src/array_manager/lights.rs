@@ -98,7 +98,6 @@ impl ArrayManager {
             if let Some(nested_lighted_id) = entry.strip_prefix('@') {
                 let nested_lights_list = array.lights.get(nested_lighted_id).ok_or_else(|| DmxArrayError::ArrayLightsNotFound(array_id.to_string(), stack.to_string(), nested_lighted_id.to_string()))?;
 
-
                 stack.push(nested_lights_list.to_string());
 
                 if stack.len() > 5 {
@@ -137,20 +136,5 @@ impl ArrayManager {
     pub fn get_array_light_channels(&self, array_id: &str, lights_list: &str) -> Result<Vec<UniverseChannelDefinitions>, DmxArrayError> {
         let array = self.get_array(array_id)?;
         Self::static_get_array_light_channels(array_id, array, lights_list)
-    }
-
-    pub fn get_array_all_lights(&self, array_id: &str) -> Result<Vec<UniverseChannelDefinitions>, DmxArrayError> {
-        self.get_array_light_channels(array_id, "@all")
-    }
-
-    pub fn get_array_dimmed_lights(&self, array_id: &str) -> Result<Vec<UniverseChannelDefinitions>, DmxArrayError> {
-        let array = self.get_array(array_id)?;
-
-        if array.lights.contains_key("dimmed") {
-            self.get_array_light_channels(array_id, "@dimmed")
-        }
-        else {
-            self.get_array_all_lights(array_id)
-        }
     }
 }

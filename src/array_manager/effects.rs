@@ -1,26 +1,31 @@
-
 use std::collections::HashMap;
 
 use crate::defs::{self, DimmingAmount};
 use crate::defs::{EffectNodeDefinition, EffectUsage};
 
-use super::{ArrayManager, Scope};
 use super::error::DmxArrayError;
+use super::{ArrayManager, Scope};
 use crate::artnet_manager::EffectNodeRuntime;
 
-
 impl defs::EffectNodeDefinition {
-    pub fn get_runtime_node(&self, scope: &Scope) -> Result<Box<dyn EffectNodeRuntime>, DmxArrayError> {
+    pub fn get_runtime_node(
+        &self,
+        scope: &Scope,
+    ) -> Result<Box<dyn EffectNodeRuntime>, DmxArrayError> {
         match self {
             defs::EffectNodeDefinition::Sequence(node) => node.get_runtime_node(scope),
             defs::EffectNodeDefinition::Parallel(node) => node.get_runtime_node(scope),
-            &defs::EffectNodeDefinition::Fade(ref node) => node.get_runtime_node(scope),
-            &defs::EffectNodeDefinition::Delay(ref node) => node.get_runtime_node(scope),
+            defs::EffectNodeDefinition::Fade(ref node) => node.get_runtime_node(scope),
+            defs::EffectNodeDefinition::Delay(ref node) => node.get_runtime_node(scope),
         }
     }
 }
 
 impl ArrayManager {
+    //
+    // Get effect definition by looking for the effect_id in the array effects list, then the global effects list.
+    // If the effect_id is not found, return None.
+    //
     fn get_effect_definition(
         &self,
         array_id: &str,
@@ -51,13 +56,13 @@ impl ArrayManager {
 
                 Ok(preset_effect_id
                     .as_ref()
-                    .map(|s| s.clone())
+                    .cloned()
                     .unwrap_or(default_effect_id.to_string()))
             } else {
-                return Err(DmxArrayError::ArrayPresetNotFound(
+                Err(DmxArrayError::ArrayPresetNotFound(
                     array_id.to_string(),
                     preset_number,
-                ));
+                ))
             }
         } else {
             Ok(match usage {
@@ -73,14 +78,23 @@ impl ArrayManager {
         array_id: &str,
         preset_number: Option<usize>,
     ) -> Result<&EffectNodeDefinition, DmxArrayError> {
-        let effect_id = self.get_usage_effect_id(&usage, array_id, preset_number)?;
+        let effect_id = self.get_usage_effect_id(usage, array_id, preset_number)?;
+        let array = self.get_array(array_id)?;
 
-        Ok(self
+        let effect_definition = self
             .get_effect_definition(array_id, &effect_id)?
-            .unwrap_or_else(|| match usage {
-                EffectUsage::On => &self.default_on_effect,
-                EffectUsage::Off => &self.default_off_effect,
-            }))
+            .or_else(|| match usage {
+                EffectUsage::On if effect_id == array.on => Some(&self.default_on_effect),
+                EffectUsage::Off if effect_id == array.off => Some(&self.default_off_effect),
+                _ => None,
+            });
+
+        effect_definition.ok_or_else(|| {
+            DmxArrayError::EffectNotFound(
+                format!("{} ({})", array_id, array.description),
+                effect_id.clone(),
+            )
+        })
     }
 
     pub fn get_usage_effect_runtime(
@@ -96,5 +110,4 @@ impl ArrayManager {
 
         effect_definition.get_runtime_node(&scope)
     }
-
 }

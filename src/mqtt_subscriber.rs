@@ -40,8 +40,11 @@ enum MqttMessageError {
     #[error("Error parsing {0} ('{1}'): {2}")]
     JsonParseError(String, String, #[source] serde_json::Error),
 
-    #[error("Missing command (topic should be DMX/Command/[On, Off])")]
+    #[error("Missing command (topic should be DMX/Command/[On, Off, Stop])")]
     MissingCommand,
+
+    #[error("Invalid command: '{0}' (topic should be DMX/Command/[On, Off, Stop])")]
+    InvalidCommand(String),
 }
 
 struct MqttSubscriber {
@@ -285,54 +288,74 @@ impl MqttSubscriber {
         command: &str,
         payload: &Bytes,
     ) -> Result<(), MqttMessageError> {
-        if command == "On" || command == "Off" {
-            let usage = if command == "On" {
-                EffectUsage::On
-            } else {
-                EffectUsage::Off
-            };
-            let command_parameters =
-                serde_json::from_slice::<defs::OnOffCommandParameters>(payload).map_err(|e| {
-                    MqttMessageError::JsonParseError(
-                        "On/Off command parameters".to_string(),
-                        command.to_string(),
-                        e,
-                    )
-                })?;
-
-            let (tx, rx) = oneshot::channel::<Result<Box<dyn EffectNodeRuntime>, DmxArrayError>>();
-
-            // Use the array ID as the effect ID
-            let effect_id = command_parameters.array_id.clone();
-
-            self.to_array_tx
-                .send(messages::ToArrayManagerMessage::GetEffectRuntime(
-                    command_parameters.array_id,
-                    usage,
-                    command_parameters.preset_number,
-                    command_parameters.values,
-                    command_parameters.dimming_amount.unwrap_or(DIMMING_AMOUNT_MAX),
-                    tx,
-                ))
-                .await
-                .unwrap();
-
-            let result = rx.await.unwrap();
-
-            match result {  
-                Err(e) => return Err(MqttMessageError::ArrayOperationError(e)),
-                Ok(effect_runtime_node) => {
-                    let (tx, rx) = oneshot::channel::<Result<(), ArtnetError>>();
-
-                    self.to_artnet_tx.send(messages::ToArtnetManagerMessage::StartEffect(effect_id, effect_runtime_node, tx)).await.unwrap();
-
-                    if let Err(e) = rx.await.unwrap() {
-                        return Err(MqttMessageError::UniverseOperationError(e));
+        match command {
+            "On" | "Off" => {
+                let usage = if command == "On" {
+                    EffectUsage::On
+                } else {
+                    EffectUsage::Off
+                };
+                let command_parameters =
+                    serde_json::from_slice::<defs::OnOffCommandParameters>(payload).map_err(|e| {
+                        MqttMessageError::JsonParseError(
+                            "On/Off command parameters".to_string(),
+                            command.to_string(),
+                            e,
+                        )
+                    })?;
+    
+                let (tx, rx) = oneshot::channel::<Result<Box<dyn EffectNodeRuntime>, DmxArrayError>>();
+    
+                // Use the array ID as the effect ID
+                let effect_id = command_parameters.array_id.clone();
+    
+                self.to_array_tx
+                    .send(messages::ToArrayManagerMessage::GetEffectRuntime(
+                        command_parameters.array_id,
+                        usage,
+                        command_parameters.preset_number,
+                        command_parameters.values,
+                        command_parameters.dimming_amount.unwrap_or(DIMMING_AMOUNT_MAX),
+                        tx,
+                    ))
+                    .await
+                    .unwrap();
+    
+                let result = rx.await.unwrap();
+    
+                match result {  
+                    Err(e) => return Err(MqttMessageError::ArrayOperationError(e)),
+                    Ok(effect_runtime_node) => {
+                        let (tx, rx) = oneshot::channel::<Result<(), ArtnetError>>();
+    
+                        self.to_artnet_tx.send(messages::ToArtnetManagerMessage::StartEffect(effect_id, effect_runtime_node, tx)).await.unwrap();
+    
+                        if let Err(e) = rx.await.unwrap() {
+                            return Err(MqttMessageError::UniverseOperationError(e));
+                        }
                     }
                 }
-            }
-
+            },
+            "Stop" => {
+                let command_parameters =
+                    serde_json::from_slice::<defs::StopCommandParameters>(payload).map_err(|e| {
+                        MqttMessageError::JsonParseError(
+                            "Stop command parameters".to_string(),
+                            command.to_string(),
+                            e,
+                        )
+                    })?;
+    
+                let (tx, rx) = oneshot::channel::<Result<(), ArtnetError>>();
+    
+                self.to_artnet_tx.send(messages::ToArtnetManagerMessage::StopEffect(command_parameters.array_id, tx)).await.unwrap();
+                if let Err(e) = rx.await.unwrap() {
+                    return Err(MqttMessageError::UniverseOperationError(e));
+                }
+            },
+            _ => return Err(MqttMessageError::InvalidCommand(command.to_string())),
         }
+
         Ok(())
     }
 }

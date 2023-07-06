@@ -19,9 +19,6 @@ pub enum DmxArrayError {
     #[error("Effect '{0}' not found in array '{1}' or in global effects list")]
     EffectNotFound(String, String),
 
-    #[error("Value '{0}' not found in effect '{1}' or in array {2} values'")]
-    EffectValueNotFound(String, String, String),
-
     #[error("Array '{0}' has no preset# {1} defined")]
     ArrayPresetNotFound(String, usize),
 
@@ -34,17 +31,8 @@ pub enum DmxArrayError {
     #[error("Array '{0}' '{1}' has unterminated `value` expression")]
     ValueExpressionNotTerminated(String, String),
 
-    #[error("Array '{0}' has no presets and no default 'on' or 'off' effects are defined")]
-    ArrayNoDefaultEffects(String),
-
-    #[error("Array '{0} has no lights group named 'all', this light group is mandatory")]
-    ArrayNoAllLightsGroup(String),
-
     #[error("Array '{0}' preset {1} '{2}' effect is '{3}' which is not defined")]
     ArrayPresetEffectNotFound(String, usize, &'static str, String),
-
-    #[error("Array '{0}' preset {1} {2} effect use default on effect which is not defined")]
-    ArrayPresetDefaultEffectNotFound(String, usize, &'static str),
 
     #[error("Array '{0}' in universe '{1}': channel {2} was defined as {3} and is redefined as {4} in group @{5}")]
     ArrayLightChannelUsageMismatch(String, String, u16, ChannelUsage, ChannelUsage, String),
@@ -54,10 +42,4 @@ pub enum DmxArrayError {
 
     #[error("{0} {1}: {2}")]
     ValueError(String, &'static str, String),
-
-    #[error("{0} {1}: {2}")]
-    InvalidFadeTargetValue(String, &'static str, String),
-
-    #[error("'{0}' error in effect {1}: '{2}'")]
-    InvalidEffectError(String, String, String),
 }

@@ -128,27 +128,11 @@ impl ArtnetManager {
         }
     }
 
-    fn set_channels(&mut self, universe_id: &str, channel_value_list: &Vec<ChannelValue>) -> Result<(), ArtnetError> {
-        for channel_value in channel_value_list {
-            self.set_channel(universe_id, channel_value)?;
-        }
-        Ok(())
-    }
-
     pub fn get_channel(&self, universe_id: &str, channel_definition: &ChannelDefinition) -> Result<ChannelValue, ArtnetError> {
         match self.universes.get(universe_id) {
             Some(u) => u.get_channel(channel_definition),
             None => Err(ArtnetError::InvalidUniverse(universe_id.to_string())),
         }
-    }
-
-    fn get_channels(&self, universe_id: &str, channel_definitions: &Vec<ChannelDefinition>) -> Result<Vec<ChannelValue>, ArtnetError> {
-        let mut channel_values = Vec::new();
-
-        for channel_definition in channel_definitions {
-            channel_values.push(self.get_channel(universe_id, channel_definition)?);
-        }
-        Ok(channel_values)
     }
 
     fn send_modified_universes(&mut self) -> Result<(), ArtnetError> {
@@ -174,16 +158,10 @@ impl ArtnetManager {
                 reply_tx.send(self.add_universe(&universe_id, definition)).unwrap(),
             ToArtnetManagerMessage::RemoveUniverse(universe_id, sender) =>
                 sender.send(self.remove_universe(&universe_id)).unwrap(),
-            ToArtnetManagerMessage::SetChannel(universe_id, channel_value, reply_tx) =>
-                reply_tx.send(self.set_channel(&universe_id, &channel_value)).unwrap(),
-            ToArtnetManagerMessage::SetChannels(universe_id,  channel_value_list, reply_tx) =>
-                reply_tx.send(self.set_channels(&universe_id, &channel_value_list)).unwrap(),
-            ToArtnetManagerMessage::GetChannel(universe_id, channel_definition, reply_tx) =>
-                reply_tx.send(self.get_channel(&universe_id, &channel_definition)).unwrap(),
-            ToArtnetManagerMessage::GetChannels(universe_id, channel_definitions, reply_tx) =>
-                reply_tx.send(self.get_channels(&universe_id, &channel_definitions)).unwrap(),
             ToArtnetManagerMessage::StartEffect(effect_id, effect_node_runtime, reply_tx) => 
                 reply_tx.send(self.start_effect(&effect_id, effect_node_runtime)).unwrap(),
+            ToArtnetManagerMessage::StopEffect(effect_id, sender) =>
+                sender.send(self.stop_effect(&effect_id)).unwrap(),
                 
         }
     }

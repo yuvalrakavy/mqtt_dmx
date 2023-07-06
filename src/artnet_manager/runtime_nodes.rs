@@ -289,39 +289,24 @@ impl FadeEffectNode {
 
     fn initialize_channel_state(&self, artnet_manager: &mut ArtnetManager, universe_id: &str, channel_definition: &ChannelDefinition) -> Result<Option<FadeEffectChannelState>, ArtnetError> {
         Ok(match artnet_manager.get_channel(universe_id, channel_definition)?.value {
-            crate::dmx::DimmerValue::Rgb(current_r, current_g, current_b) => {
-                if let Some((target_r, target_g, target_b)) = self.target.rgb {
-                    Some(FadeEffectChannelState { channel: channel_definition.channel, value: FadeEffectDimmerState::Rgb(
-                        DmxChannelDelta::new(current_r, target_r, self.ticks),
-                        DmxChannelDelta::new(current_g, target_g, self.ticks),
-                        DmxChannelDelta::new(current_b, target_b, self.ticks)
-                    )})
-                }
-                else {
-                    None
-                }
+            DimmerValue::Rgb(current_r, current_g, current_b) => {
+                self.target.rgb.map(|target| FadeEffectChannelState { channel: channel_definition.channel, value: FadeEffectDimmerState::Rgb(
+                    DmxChannelDelta::new(current_r, target.0, self.ticks),
+                    DmxChannelDelta::new(current_g, target.1, self.ticks),
+                    DmxChannelDelta::new(current_b, target.2, self.ticks)
+                )})
             },
-            crate::dmx::DimmerValue::TriWhite(current_w1, current_w2, current_w3) => {
-                if let Some((target_w1, target_w2, target_w3)) = self.target.tri_white {
-                    Some(FadeEffectChannelState { channel: channel_definition.channel, value: FadeEffectDimmerState::TriWhite(
-                        DmxChannelDelta::new(current_w1, target_w1, self.ticks),
-                        DmxChannelDelta::new(current_w2, target_w2, self.ticks),
-                        DmxChannelDelta::new(current_w3, target_w3, self.ticks)
-                    )})
-                }
-                else {
-                    None
-                }
+            DimmerValue::TriWhite(current_w1, current_w2, current_w3) => {
+                self.target.tri_white.map(|target| FadeEffectChannelState { channel: channel_definition.channel, value: FadeEffectDimmerState::TriWhite(
+                    DmxChannelDelta::new(current_w1, target.0, self.ticks),
+                    DmxChannelDelta::new(current_w2, target.1, self.ticks),
+                    DmxChannelDelta::new(current_w3, target.2, self.ticks)
+                )})
             },
-            crate::dmx::DimmerValue::Single(current) => {
-                if let Some(target) = self.target.single {
-                    Some(FadeEffectChannelState { channel: channel_definition.channel, value: FadeEffectDimmerState::Single(
-                        DmxChannelDelta::new(current, target, self.ticks)
-                    )})
-                }
-                else {
-                    None
-                }
+            DimmerValue::Single(current) => {
+                self.target.single.map(|target| FadeEffectChannelState { channel: channel_definition.channel, value: FadeEffectDimmerState::Single(
+                    DmxChannelDelta::new(current, target, self.ticks)
+                )})
             },
         })
     }

@@ -78,19 +78,13 @@ impl Service<Stopped> {
         });
 
         // Create mqtt publisher worker
-        let to_mqtt_publisher_tx_instance = to_mqtt_publisher_tx.clone();
-
         self.workers.spawn(async move {
             mqtt_publisher::run(mqtt_client, to_mqtt_publisher_rx).await;
         });
 
         // Create mqtt subscriber worker
-        let to_artnet_tx_instance = to_artnet_tx.clone();
-        let to_array_tx_instance = to_array_tx.clone();
-        let cancel_instance = cancel.clone();
-
         self.workers.spawn(async move {
-            mqtt_subscriber::run(cancel_instance, mqtt_event_loop, to_artnet_tx_instance, to_array_tx_instance, to_mqtt_publisher_tx_instance).await;
+            mqtt_subscriber::run(cancel, mqtt_event_loop, to_artnet_tx, to_array_tx, to_mqtt_publisher_tx).await;
         });
 
         // Create DMX refresh worker

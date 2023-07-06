@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use tokio::sync::oneshot::Sender;
 use crate::artnet_manager::EffectNodeRuntime;
 use crate::defs::{self, EffectUsage};
-use crate::{dmx, artnet_manager::ArtnetError, array_manager::DmxArrayError};
+use crate::{artnet_manager::ArtnetError, array_manager::DmxArrayError};
 
 
 #[derive(Debug)]
@@ -12,11 +12,7 @@ pub enum ToArtnetManagerMessage {
     RemoveUniverse(String, Sender<Result<(), ArtnetError>>),
 
     StartEffect(String, Box<dyn EffectNodeRuntime>, Sender<Result<(), ArtnetError>>),
-
-    SetChannel(String, dmx::ChannelValue, Sender<Result<(), ArtnetError>>),
-    GetChannel(String, dmx::ChannelDefinition, Sender<Result<dmx::ChannelValue, ArtnetError>>),
-    SetChannels(String, Vec<dmx::ChannelValue>, Sender<Result<(), ArtnetError>>),
-    GetChannels(String, Vec<dmx::ChannelDefinition>, Sender<Result<Vec<dmx::ChannelValue>, ArtnetError>>),
+    StopEffect(String, Sender<Result<(), ArtnetError>>),
 }
 
 #[derive(Debug)]
