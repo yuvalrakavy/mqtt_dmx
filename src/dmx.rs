@@ -21,7 +21,7 @@ pub struct UniverseChannelDefinitions {
     pub channels: Vec<ChannelDefinition>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum DimmerValue {
     Rgb(u8, u8, u8),
     TriWhite(u8, u8, u8),
@@ -46,7 +46,7 @@ impl DimmerValue {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ChannelValue {
     pub channel: u16,
     pub value: DimmerValue,

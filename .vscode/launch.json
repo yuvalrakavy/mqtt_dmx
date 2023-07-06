@@ -20,7 +20,10 @@
                 }
             },
             "args": ["localhost"],
-            "cwd": "${workspaceFolder}"
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "RUST_LOG": "trace,rumqttc=off"
+            }
         },
         {
             "type": "lldb",

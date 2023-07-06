@@ -56,13 +56,16 @@ impl Service<Stopped> {
         // Create the channels for the workers
         let (to_artnet_tx, to_artnet_rx) = tokio::sync::mpsc::channel::<messages::ToArtnetManagerMessage>(10);
         let (to_array_tx, to_array_rx) = tokio::sync::mpsc::channel::<messages::ToArrayManagerMessage>(10);
+        let (to_mqtt_publisher_tx, to_mqtt_publisher_rx) = tokio::sync::mpsc::channel::<messages::ToMqttPublisherMessage>(10);
+
+        let to_mqtt_publisher_tx_instance = to_mqtt_publisher_tx.clone();
 
         // Create Artnet manager worker
         let cancel_instance = cancel.clone();
         self.workers.spawn(async move {
             let mut artnet_manager = ArtnetManager::new();
 
-            artnet_manager.run(cancel_instance, to_artnet_rx).await;
+            artnet_manager.run(cancel_instance, to_artnet_rx, to_mqtt_publisher_tx_instance).await;
         });
 
         // Create array manager worker
@@ -75,7 +78,6 @@ impl Service<Stopped> {
         });
 
         // Create mqtt publisher worker
-        let (to_mqtt_publisher_tx, to_mqtt_publisher_rx) = tokio::sync::mpsc::channel::<messages::ToMqttPublisherMessage>(10);
         let to_mqtt_publisher_tx_instance = to_mqtt_publisher_tx.clone();
 
         self.workers.spawn(async move {

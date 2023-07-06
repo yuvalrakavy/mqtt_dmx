@@ -22,15 +22,15 @@ impl ArrayManager {
         {
             "type": "fade",
             "lights": "@all",
-            "ticks": "`default_ticks=10`",
-            "target": "`default_target=s(255);rgb(255,255,255);w(255,255,255)`"
+            "ticks": "`ticks=10`",
+            "target": "`target=s(255);rgb(255,255,255);w(255,255,255)`"
         }"#;
         let default_off_json = r#"
         {
             "type": "fade",
             "lights": "@all",
-            "ticks": "`default_ticks=10`",
-            "target": "`default_target=s(0);rgb(0,0,0);w(0,0,0)`"
+            "ticks": "`ticks=10`",
+            "target": "`target=s(0);rgb(0,0,0);w(0,0,0)`"
         }"#;
 
         let default_on_effect =
@@ -86,6 +86,23 @@ impl ArrayManager {
             ToArrayManagerMessage::RemoveValues(reply_tx) => {
                 reply_tx.send(self.remove_values()).unwrap()
             }
+
+            ToArrayManagerMessage::GetEffectRuntime(
+                array_id,
+                effect_usage,
+                preset_number,
+                values,
+                dimming_amount,
+                reply_tx,
+            ) => reply_tx
+                .send(self.get_usage_effect_runtime(
+                    &effect_usage,
+                    &array_id,
+                    preset_number,
+                    values,
+                    dimming_amount,
+                ))
+                .unwrap(),
         }
     }
 

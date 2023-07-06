@@ -208,7 +208,7 @@ struct DmxChannelDelta {
     delta: u8,
     dx: u32,
     dy: u32,
-    fraction: u32,
+    fraction: i32,
 }
 
 impl DmxChannelDelta {
@@ -227,7 +227,7 @@ impl DmxChannelDelta {
 
         let dx = ticks as u32 * 2;
         let dy = left_over as u32 * 2;
-        let fraction = dy - (dx >> 1);
+        let fraction: i32 = dy as i32 - (dx as i32 >> 1);
 
         DmxChannelDelta { 
             value: current_value,
@@ -244,18 +244,18 @@ impl DmxChannelDelta {
             self.value += self.delta;
             if self.fraction >= 0 {
                 self.value += 1;
-                self.fraction -= self.dx;
+                self.fraction -= self.dx as i32;
             }
         }
         else {
             self.value -= self.delta;
             if self.fraction >= 0 {
                 self.value -= 1;
-                self.fraction -= self.dx;
+                self.fraction -= self.dx as i32;
             }
         }
 
-        self.fraction += self.dy;
+        self.fraction += self.dy as i32;
     }
 }
 

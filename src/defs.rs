@@ -104,3 +104,15 @@ pub struct FadeEffectNodeDefinition {
     pub ticks: NumberOrVariable,
     pub target: String,
 }
+
+// Commands
+//
+// Sent to:  DMX/Command/On
+// or to: DMX/Command/Off
+#[derive(Deserialize, Debug)]
+pub struct OnOffCommandParameters {
+    pub array_id: String,
+    pub preset_number: Option<usize>,
+    pub values: Option<HashMap<String, String>>,
+    pub dimming_amount: Option<DimmingAmount>,
+}

@@ -83,7 +83,7 @@ impl ArrayManager {
             }))
     }
 
-    pub (super)fn get_usage_effect_runtime(
+    pub fn get_usage_effect_runtime(
         &self,
         usage: &EffectUsage,
         array_id: &str,
