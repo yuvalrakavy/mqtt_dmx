@@ -127,23 +127,33 @@ pub struct FadeEffectNode {
 impl EffectNodeRuntime for FadeEffectNode {
     fn tick(&mut self, artnet_manager: &mut ArtnetManager) -> Result<(), ArtnetError> {
         if self.state.is_none() {
-            self.state = Some(self.initialize_state(artnet_manager)?);
-        }
+            let state = self.initialize_state(artnet_manager)?;
 
-        for universe_state in self.state.as_mut().unwrap().universe_states.iter_mut() {
-            for channel_state in universe_state.channel_states.iter_mut() {
-                channel_state.value.tick();
-                artnet_manager.set_channel(&universe_state.universe_id, &channel_state.get_channel_value())?;
+            if !state.fade_needed() {
+                self.current_tick = self.ticks;
+            }
+            else {
+                self.state = Some(state);
             }
         }
 
-        self.current_tick += 1;
+        if self.current_tick < self.ticks {
+            for universe_state in self.state.as_mut().unwrap().universe_states.iter_mut() {
+                for channel_state in universe_state.channel_states.iter_mut() {
+                    channel_state.value.tick();
+                    artnet_manager.set_channel(&universe_state.universe_id, &channel_state.get_channel_value())?;
+                }
+            }
+            self.current_tick += 1;
+        }
+
         Ok(())
     }
 
     fn is_done(&self) -> bool {
         self.current_tick >= self.ticks
     }
+
 }
 
 #[derive(Debug)]
@@ -151,10 +161,22 @@ struct FadeEffectState {
     universe_states: Vec<FadeEffectUniverseState>,
 }
 
+impl FadeEffectState {
+    pub (self) fn fade_needed(&self) -> bool {
+        self.universe_states.iter().any(|universe_state| universe_state.fade_needed())
+    }
+}
+
 #[derive(Debug)]
 struct FadeEffectUniverseState {
     universe_id: String,
     channel_states: Vec<FadeEffectChannelState>,
+}
+
+impl FadeEffectUniverseState {
+    pub(self) fn fade_needed(&self) -> bool {
+        self.channel_states.iter().any(|channel_state| channel_state.is_fade_needed())
+    }
 }
 
 #[derive(Debug)]
@@ -171,6 +193,10 @@ impl FadeEffectChannelState {
             FadeEffectDimmerState::TriWhite(w1, w2, w3) => ChannelValue { channel: self.channel, value: DimmerValue::TriWhite(w1.value, w2.value, w3.value) },
         }
     }
+
+    pub (self) fn is_fade_needed(&self) -> bool {
+        self.value.is_fade_needed()
+    }
 } 
 
 
@@ -182,7 +208,7 @@ enum FadeEffectDimmerState {
 }
 
 impl FadeEffectDimmerState {
-    pub fn tick(&mut self) {
+    pub(self) fn tick(&mut self) {
         match self {
             FadeEffectDimmerState::Single(channel) => {
                 channel.tick();
@@ -197,6 +223,14 @@ impl FadeEffectDimmerState {
                 w2.tick();
                 w3.tick();
             }
+        }
+    }
+
+    pub(self) fn is_fade_needed(&self) -> bool {
+        match self {
+            FadeEffectDimmerState::Single(channel) => channel.is_fade_needed(),
+            FadeEffectDimmerState::Rgb(r, g, b) => r.is_fade_needed() || g.is_fade_needed() || b.is_fade_needed(),
+            FadeEffectDimmerState::TriWhite(w1, w2, w3) => w1.is_fade_needed() || w2.is_fade_needed() || w3.is_fade_needed(),
         }
     }
 }
@@ -256,6 +290,10 @@ impl DmxChannelDelta {
         }
 
         self.fraction += self.dy as i32;
+    }
+
+    pub(self) fn is_fade_needed(&self) -> bool {
+        self.delta > 0 || self.dy > 0
     }
 }
 
