@@ -4,7 +4,7 @@ use tokio_util::sync::CancellationToken;
 use log::info;
 
 use super::ArtnetError;
-use crate::{defs::UniverseDefinition, dmx::*, messages::{ToArtnetManagerMessage, ToMqttPublisherMessage}};
+use crate::{defs::UniverseDefinition, defs::{self, TargetValue}, dmx::*, messages::{ToArtnetManagerMessage, ToMqttPublisherMessage}};
 
 //NOTE: Actual Artnet packet sending is commented out
 
@@ -20,6 +20,8 @@ pub (super)struct Universe {
     controller: Arc<ArtnetController>,
     packet_bytes: Vec<u8>,
     modified: bool,
+    log: bool,
+    disable_send: bool,
     non_modified_ticks: usize,      // Number of ticks in which this universe was not modified (used to determine when to send a packet)
 }
 
@@ -117,13 +119,16 @@ impl ArtnetManager {
 
 
     pub fn set_channel(&mut self, universe_id: &str, v: &ChannelValue) -> Result<(), ArtnetError> {
-        #[cfg(test)]
-        self.set_channel_log.push(v.clone());
-        
         info!("Setting channel {} to {:?}", v.channel, v.value);
 
         match self.universes.get_mut(universe_id) {
-            Some(u) => u.set_channel(v),
+            Some(u) => {
+                if u.log {
+                    #[cfg(test)]
+                    self.set_channel_log.push(v.clone());
+                }
+                u.set_channel(v)
+            },
             None => Err(ArtnetError::InvalidUniverse(universe_id.to_string())),
         }
     }
@@ -152,6 +157,32 @@ impl ArtnetManager {
         Ok(())
     }
 
+    fn set_channels(&mut self, parameters: &defs::SetChannelsParameters) -> Result<(), ArtnetError> {
+        let mut target = parameters.target.parse::<TargetValue>()?;
+        let channels = parameters.channels.split(',').map(|c| c.parse::<ChannelDefinition>()).collect::<Result<Vec<ChannelDefinition>, _>>()?;
+
+        if let Some(dimming_amount) = parameters.dimming_amount {
+            target = target.get_dimmed_value(dimming_amount);
+        }
+
+        for channel_definition in channels.iter() {
+            let channel_value = target.get(channel_definition.channel_type);
+
+            if let Some(channel_value) = channel_value {
+                let channel_value = ChannelValue {
+                    channel: channel_definition.channel,
+                    value: channel_value,
+                };
+                self.set_channel(&parameters.universe_id, &channel_value)?;
+            }
+            else {
+                return Err(ArtnetError::MissingTargetValue(channel_definition.to_string(), parameters.target.to_string()))
+            }
+        }
+
+        Ok(())
+    }
+
     fn handle_message(&mut self, message: ToArtnetManagerMessage) {
         match message {
             ToArtnetManagerMessage::AddUniverse(universe_id, definition, reply_tx) => 
@@ -162,7 +193,8 @@ impl ArtnetManager {
                 reply_tx.send(self.start_effect(&effect_id, effect_node_runtime)).unwrap(),
             ToArtnetManagerMessage::StopEffect(effect_id, sender) =>
                 sender.send(self.stop_effect(&effect_id)).unwrap(),
-                
+            ToArtnetManagerMessage::SetChannels(parameters, sender) =>
+                sender.send(self.set_channels(&parameters)).unwrap(),
         }
     }
 
@@ -206,7 +238,7 @@ impl ArtnetController {
     }
 
     pub fn send(&self, packet_bytes: &[u8]) -> Result<(), ArtnetError> {
-        //self.socket.send(packet_bytes)?;
+        self.socket.send(packet_bytes)?;
         Ok(())
     }   
 }
@@ -247,6 +279,8 @@ impl Universe {
         Ok(Universe {
             description: format!("{0} ({1})", universe_id, definition.description),
             controller,
+            log: definition.log,
+            disable_send: definition.disable_send,
             packet_bytes,
             modified: false,
             non_modified_ticks: 0,
@@ -331,7 +365,9 @@ impl Universe {
     }
 
     pub fn send(&mut self) -> Result<(), ArtnetError> {
-        self.controller.send(self.packet_bytes.as_slice())?;
+        if !self.disable_send {
+            self.controller.send(self.packet_bytes.as_slice())?;
+        }
         self.packet_bytes[DMX_SEQ_OFFSET] = self.packet_bytes[DMX_SEQ_OFFSET].wrapping_add(1);
         self.modified = false;
         self.non_modified_ticks = 0;

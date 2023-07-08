@@ -5,7 +5,6 @@ use crate::artnet_manager::EffectNodeRuntime;
 use crate::defs::{self, EffectUsage};
 use crate::{artnet_manager::ArtnetError, array_manager::DmxArrayError};
 
-
 #[derive(Debug)]
 pub enum ToArtnetManagerMessage {
     AddUniverse(String, defs::UniverseDefinition, Sender<Result<(), ArtnetError>>),
@@ -13,6 +12,8 @@ pub enum ToArtnetManagerMessage {
 
     StartEffect(String, Box<dyn EffectNodeRuntime>, Sender<Result<(), ArtnetError>>),
     StopEffect(String, Sender<Result<(), ArtnetError>>),
+
+    SetChannels(defs::SetChannelsParameters, Sender<Result<(), ArtnetError>>),
 }
 
 #[derive(Debug)]

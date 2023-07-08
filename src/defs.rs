@@ -12,6 +12,12 @@ pub struct UniverseDefinition {
     pub subnet: u8,
     pub universe: u8,
     pub channels: u16,
+
+    #[serde(default)]
+    pub log: bool,              // Log SetChannel calls for testing (applicable only if #cfg(test)
+
+    #[serde(default)]
+    pub disable_send: bool,     // Disable sending DMX packets for testing
 }
 
 pub type DimmingAmount = usize;
@@ -120,4 +126,12 @@ pub struct OnOffCommandParameters {
 #[derive(Deserialize, Debug)]
 pub struct StopCommandParameters {
     pub array_id: String,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct SetChannelsParameters {
+    pub universe_id: String,
+    pub channels: String,
+    pub target: String,
+    pub dimming_amount: Option<DimmingAmount>,
 }

@@ -1,8 +1,9 @@
 use crate::artnet_manager::ArtnetError;
 use crate::defs::{DimmingAmount, TargetValue};
+use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum ChannelType {
     Rgb,
     TriWhite,
@@ -13,6 +14,16 @@ pub enum ChannelType {
 pub struct ChannelDefinition {
     pub channel: u16,
     pub channel_type: ChannelType,
+}
+
+impl Display for ChannelDefinition {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self.channel_type {
+            ChannelType::Rgb => write!(f, "rgb({})", self.channel),
+            ChannelType::TriWhite => write!(f, "w({})", self.channel),
+            ChannelType::Single => write!(f, "s({})", self.channel),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -108,7 +119,6 @@ impl FromStr for ChannelDefinition {
 }
 
 impl TargetValue {
-    #[cfg(test)]
     pub fn get(&self, channel_type: ChannelType) -> Option<DimmerValue> {
         match channel_type {
             ChannelType::Rgb => self.rgb.map(|(r, g, b)| DimmerValue::Rgb(r, g, b)),
@@ -137,7 +147,6 @@ impl TargetValue {
             }),
             single: self.single.map(|v| (v as DimmingAmount * dimming_amount / 1000) as u8),
         }
-
     }
 }
 

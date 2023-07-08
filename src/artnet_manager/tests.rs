@@ -14,6 +14,8 @@ mod test_universe {
             subnet: 0,
             universe: 0,
             channels: 306,
+            log: false,
+            disable_send: true,
         }
     }
 
@@ -163,6 +165,8 @@ mod test_artnet_manager {
             subnet: 0,
             universe: 0,
             channels: 306,
+            log: false,
+            disable_send: true,
         }
     }
 
@@ -296,6 +300,8 @@ mod test_effect_nodes {
             subnet: 0,
             universe: 0,
             channels: 306,
+            log: true,
+            disable_send: false,
         }
     }
 

@@ -32,4 +32,7 @@ pub enum ArtnetError {
 
     #[error("Ambiguous target value: '{0}'")]
     AmbiguousTargetValue(String),
+
+    #[error("You try to set a value of channel {0} however target {1} has no value for this type of channel")]
+    MissingTargetValue(String, String),
 }

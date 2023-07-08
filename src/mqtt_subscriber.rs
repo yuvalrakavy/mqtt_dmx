@@ -353,6 +353,23 @@ impl MqttSubscriber {
                     return Err(MqttMessageError::UniverseOperationError(e));
                 }
             },
+            "Set" => {
+                let command_parameters =
+                    serde_json::from_slice::<defs::SetChannelsParameters>(payload).map_err(|e| {
+                        MqttMessageError::JsonParseError(
+                            "Set command parameters".to_string(),
+                            command.to_string(),
+                            e,
+                        )
+                    })?;
+    
+                let (tx, rx) = oneshot::channel::<Result<(), ArtnetError>>();
+    
+                self.to_artnet_tx.send(messages::ToArtnetManagerMessage::SetChannels(command_parameters, tx)).await.unwrap();
+                if let Err(e) = rx.await.unwrap() {
+                    return Err(MqttMessageError::UniverseOperationError(e));
+                }
+            },
             _ => return Err(MqttMessageError::InvalidCommand(command.to_string())),
         }
 
