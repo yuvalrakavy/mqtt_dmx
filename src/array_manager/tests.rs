@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use super::*;
 use crate::defs::{DmxArray, DIMMING_AMOUNT_MAX};
-use crate::dmx::{ChannelDefinition, ChannelType};
+use crate::dmx::{ChannelDefinition};
 
 #[test]
 fn test_verify_array() {
@@ -391,33 +391,21 @@ fn test_get_array_light_channels() {
     assert_eq!(result[u0].channels.len(), 3);
     assert_eq!(
         result[u0].channels[0],
-        ChannelDefinition {
-            channel: 1,
-            channel_type: ChannelType::Rgb
-        }
+        ChannelDefinition::Rgb(1,2,3)
     );
     assert_eq!(
         result[u0].channels[1],
-        ChannelDefinition {
-            channel: 4,
-            channel_type: ChannelType::Rgb
-        }
+        ChannelDefinition::Rgb(4,5,6)
     );
     assert_eq!(
         result[u0].channels[2],
-        ChannelDefinition {
-            channel: 7,
-            channel_type: ChannelType::Single
-        }
+        ChannelDefinition::Single(7)
     );
     assert_eq!(result[u1].universe_id, "2");
     assert_eq!(result[u1].channels.len(), 1);
     assert_eq!(
         result[u1].channels[0],
-        ChannelDefinition {
-            channel: 100,
-            channel_type: ChannelType::TriWhite
-        }
+        ChannelDefinition::TriWhite(100,101,102)
     );
 }
 
@@ -537,7 +525,7 @@ fn test_effect_management() {
 
     let on_effect = array_manager.get_usage_effect_definition(&defs::EffectUsage::On, "test", None).unwrap();
     let t = format!("{:?}", on_effect);
-    assert_eq!(t, r#"Fade(FadeEffectNodeDefinition { lights: "@all", ticks: Variable("`default_ticks=10`"), target: "`default_target=s(255);rgb(255,255,255);w(255,255,255)`" })"#);
+    assert_eq!(t, r#"Fade(FadeEffectNodeDefinition { lights: "@all", ticks: Variable("`ticks=10`"), target: "`target=s(255);rgb(255,255,255);w(255,255,255)`" })"#);
 
     let _ = array_manager.get_usage_effect_runtime(&defs::EffectUsage::On, "test", None, None, DIMMING_AMOUNT_MAX).unwrap();
 

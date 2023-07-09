@@ -35,4 +35,7 @@ pub enum ArtnetError {
 
     #[error("You try to set a value of channel {0} however target {1} has no value for this type of channel")]
     MissingTargetValue(String, String),
+
+    #[error("Universe {0}: Channel {1} does not match value {2}")]
+    ChannelValueMismatch(String, String, String),
 }

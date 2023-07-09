@@ -3,7 +3,7 @@ mod test_universe {
     use crate::artnet_manager::manager::{ArtnetController, Universe, DMX_DATA_OFFSET};
     use crate::artnet_manager::ArtnetError;
     use crate::defs::UniverseDefinition;
-    use crate::dmx::{ChannelDefinition, ChannelType, ChannelValue, DimmerValue};
+    use crate::dmx::{ChannelDefinition, ChannelValue, DimmerValue};
     use std::{net::IpAddr, str::FromStr, sync::Arc};
 
     fn get_universe_definition() -> UniverseDefinition {
@@ -37,7 +37,7 @@ mod test_universe {
         let mut universe = get_universe("test");
 
         let channel_value = ChannelValue {
-            channel: 0,
+            channel: ChannelDefinition::Single(0),
             value: DimmerValue::Single(255),
         };
 
@@ -46,7 +46,7 @@ mod test_universe {
         assert_eq!(packet_bytes[DMX_DATA_OFFSET], 255);
 
         let channel_value = ChannelValue {
-            channel: 305,
+            channel: ChannelDefinition::Single(305),
             value: DimmerValue::Single(255),
         };
 
@@ -55,7 +55,7 @@ mod test_universe {
         assert_eq!(packet_bytes[DMX_DATA_OFFSET + 305], 255);
 
         let channel_value = ChannelValue {
-            channel: 0,
+            channel: ChannelDefinition::Rgb(0, 1, 2),
             value: DimmerValue::Rgb(10, 20, 30),
         };
 
@@ -71,33 +71,28 @@ mod test_universe {
         let mut universe = get_universe("test");
 
         let channel_value = ChannelValue {
-            channel: 0,
+            channel: ChannelDefinition::Single(0),
             value: DimmerValue::Single(255),
         };
 
         universe.set_channel(&channel_value).unwrap();
-        let channel_value = universe
-            .get_channel(&ChannelDefinition {
-                channel: 0,
-                channel_type: ChannelType::Single,
-            })
-            .unwrap();
+        let channel_value = universe.get_channel(&ChannelDefinition::Single(0)).unwrap();
         assert_eq!(channel_value.value, DimmerValue::Single(255));
-        assert_eq!(channel_value.channel, 0);
+        assert_eq!(channel_value.channel, ChannelDefinition::Single(0));
 
         let channel_value = ChannelValue {
-            channel: 10,
+            channel: ChannelDefinition::TriWhite(10, 11, 12),
             value: DimmerValue::TriWhite(19, 23, 30),
         };
         universe.set_channel(&channel_value).unwrap();
         let channel_value = universe
-            .get_channel(&ChannelDefinition {
-                channel: 10,
-                channel_type: ChannelType::TriWhite,
-            })
+            .get_channel(&ChannelDefinition::TriWhite(10, 11, 12))
             .unwrap();
         assert_eq!(channel_value.value, DimmerValue::TriWhite(19, 23, 30));
-        assert_eq!(channel_value.channel, 10);
+        assert_eq!(
+            channel_value.channel,
+            ChannelDefinition::TriWhite(10, 11, 12)
+        );
     }
 
     #[test]
@@ -105,19 +100,19 @@ mod test_universe {
         let mut universe = get_universe("test");
 
         let channel_value = ChannelValue {
-            channel: 305,
+            channel: ChannelDefinition::Single(305),
             value: DimmerValue::Single(255),
         };
         assert!(universe.set_channel(&channel_value).is_ok());
 
         let channel_value = ChannelValue {
-            channel: 305,
+            channel: ChannelDefinition::Rgb(305, 306, 307),
             value: DimmerValue::Rgb(10, 11, 12),
         };
         let result = universe.set_channel(&channel_value);
 
         match result {
-            Err(ArtnetError::InvalidChannel(d, 305, 306)) if d == "test (Test Universe)" => {}
+            Err(ArtnetError::InvalidChannel(d, 306, 306)) if d == "test (Test Universe)" => {}
             _ => panic!("Expected InvalidChannel error, got {:?}", result),
         }
     }
@@ -127,18 +122,12 @@ mod test_universe {
         let universe = get_universe("test");
 
         assert!(universe
-            .get_channel(&ChannelDefinition {
-                channel: 305,
-                channel_type: ChannelType::Single
-            })
+            .get_channel(&ChannelDefinition::Single(305))
             .is_ok());
-        let result = universe.get_channel(&ChannelDefinition {
-            channel: 305,
-            channel_type: ChannelType::Rgb,
-        });
+        let result = universe.get_channel(&ChannelDefinition::Rgb(306, 100, 200));
 
         match result {
-            Err(ArtnetError::InvalidChannel(d, 305, 306)) if d == "test (Test Universe)" => {}
+            Err(ArtnetError::InvalidChannel(d, 306, 306)) if d == "test (Test Universe)" => {}
             _ => panic!("Expected InvalidChannel error, got {:?}", result),
         }
     }
@@ -149,7 +138,7 @@ mod test_artnet_manager {
     use crate::{
         artnet_manager::ArtnetManager,
         defs::UniverseDefinition,
-        dmx::{ChannelDefinition, ChannelType, ChannelValue, DimmerValue},
+        dmx::{ChannelDefinition, ChannelValue, DimmerValue},
         messages::{ToArtnetManagerMessage, ToMqttPublisherMessage},
     };
 
@@ -171,12 +160,16 @@ mod test_artnet_manager {
     }
 
     fn start_artnet_manager(cancel: CancellationToken) -> Sender<ToArtnetManagerMessage> {
-        let (to_artnet_manager_sender, to_artnet_manager_receiver) = tokio::sync::mpsc::channel::<ToArtnetManagerMessage>(10);
-        let (to_mqtt_publisher_sender, _) = tokio::sync::mpsc::channel::<ToMqttPublisherMessage>(10);
-        
+        let (to_artnet_manager_sender, to_artnet_manager_receiver) =
+            tokio::sync::mpsc::channel::<ToArtnetManagerMessage>(10);
+        let (to_mqtt_publisher_sender, _) =
+            tokio::sync::mpsc::channel::<ToMqttPublisherMessage>(10);
+
         tokio::spawn(async move {
             let mut manager = ArtnetManager::new();
-            manager.run(cancel, to_artnet_manager_receiver, to_mqtt_publisher_sender).await;
+            manager
+                .run(cancel, to_artnet_manager_receiver, to_mqtt_publisher_sender)
+                .await;
         });
 
         to_artnet_manager_sender
@@ -225,36 +218,24 @@ mod test_artnet_manager {
         assert!(manager.add_universe("test", universe_definition).is_ok());
 
         let channel_value = ChannelValue {
-            channel: 5,
+            channel: ChannelDefinition::Single(5),
             value: DimmerValue::Single(255),
         };
 
         assert!(manager.set_channel("test", &channel_value).is_ok());
         let v = manager
-            .get_channel(
-                "test",
-                &ChannelDefinition {
-                    channel: 5,
-                    channel_type: ChannelType::Single,
-                },
-            )
+            .get_channel("test", &ChannelDefinition::Single(5))
             .unwrap();
         assert_eq!(v.value, DimmerValue::Single(255));
 
         let channel_value = ChannelValue {
-            channel: 10,
+            channel: ChannelDefinition::Rgb(10, 11, 12),
             value: DimmerValue::Rgb(3, 5, 8),
         };
 
         assert!(manager.set_channel("test", &channel_value).is_ok());
         let v = manager
-            .get_channel(
-                "test",
-                &ChannelDefinition {
-                    channel: 10,
-                    channel_type: ChannelType::Rgb,
-                },
-            )
+            .get_channel("test", &ChannelDefinition::Rgb(10, 11, 12))
             .unwrap();
         assert_eq!(v.value, DimmerValue::Rgb(3, 5, 8));
     }
@@ -289,7 +270,7 @@ mod test_effect_nodes {
         artnet_manager::{ArtnetManager, EffectNodeRuntime},
         defs,
         defs::{DmxArray, UniverseDefinition},
-        dmx::{ChannelValue, DimmerValue},
+        dmx::{ChannelValue, DimmerValue, ChannelDefinition},
     };
 
     fn get_universe_definition() -> UniverseDefinition {
@@ -357,22 +338,24 @@ mod test_effect_nodes {
         assert_eq!(artnet_manager.set_channel_log.len(), 4);
         assert_eq!(
             artnet_manager.set_channel_log,
-            [ChannelValue {
-                channel: 0,
-                value: DimmerValue::Single(64)
-            },
-            ChannelValue {
-                channel: 0,
-                value: DimmerValue::Single(128)
-            },
-            ChannelValue {
-                channel: 0,
-                value: DimmerValue::Single(191)
-            },
-            ChannelValue {
-                channel: 0,
-                value: DimmerValue::Single(255)
-            },]
+            [
+                ChannelValue {
+                    channel: ChannelDefinition::Single(0),
+                    value: DimmerValue::Single(64)
+                },
+                ChannelValue {
+                    channel: ChannelDefinition::Single(0),
+                    value: DimmerValue::Single(128)
+                },
+                ChannelValue {
+                    channel: ChannelDefinition::Single(0),
+                    value: DimmerValue::Single(191)
+                },
+                ChannelValue {
+                    channel: ChannelDefinition::Single(0),
+                    value: DimmerValue::Single(255)
+                },
+            ]
         );
 
         let node = array_manager
@@ -393,38 +376,40 @@ mod test_effect_nodes {
         assert_eq!(artnet_manager.set_channel_log.len(), 8);
         assert_eq!(
             artnet_manager.set_channel_log,
-            [ChannelValue {
-                channel: 0,
-                value: DimmerValue::Single(223)
-            },
-            ChannelValue {
-                channel: 0,
-                value: DimmerValue::Single(191)
-            },
-            ChannelValue {
-                channel: 0,
-                value: DimmerValue::Single(159)
-            },
-            ChannelValue {
-                channel: 0,
-                value: DimmerValue::Single(127)
-            },
-            ChannelValue {
-                channel: 0,
-                value: DimmerValue::Single(96)
-            },
-            ChannelValue {
-                channel: 0,
-                value: DimmerValue::Single(64)
-            },
-            ChannelValue {
-                channel: 0,
-                value: DimmerValue::Single(32)
-            },
-            ChannelValue {
-                channel: 0,
-                value: DimmerValue::Single(0)
-            },]
+            [
+                ChannelValue {
+                    channel: ChannelDefinition::Single(0),
+                    value: DimmerValue::Single(223)
+                },
+                ChannelValue {
+                    channel: ChannelDefinition::Single(0),
+                    value: DimmerValue::Single(191)
+                },
+                ChannelValue {
+                    channel: ChannelDefinition::Single(0),
+                    value: DimmerValue::Single(159)
+                },
+                ChannelValue {
+                    channel: ChannelDefinition::Single(0),
+                    value: DimmerValue::Single(127)
+                },
+                ChannelValue {
+                    channel: ChannelDefinition::Single(0),
+                    value: DimmerValue::Single(96)
+                },
+                ChannelValue {
+                    channel: ChannelDefinition::Single(0),
+                    value: DimmerValue::Single(64)
+                },
+                ChannelValue {
+                    channel: ChannelDefinition::Single(0),
+                    value: DimmerValue::Single(32)
+                },
+                ChannelValue {
+                    channel: ChannelDefinition::Single(0),
+                    value: DimmerValue::Single(0)
+                },
+            ]
         );
     }
 
@@ -469,7 +454,7 @@ mod test_effect_nodes {
                 "test",
                 None,
                 None,
-                800,        // 80% dimming
+                800, // 80% dimming
             )
             .unwrap();
 
@@ -484,7 +469,7 @@ mod test_effect_nodes {
                 "test",
                 None,
                 None,
-                defs::DIMMING_AMOUNT_MAX,        // 100% dimming
+                defs::DIMMING_AMOUNT_MAX, // 100% dimming
             )
             .unwrap();
 
@@ -499,7 +484,7 @@ mod test_effect_nodes {
                 "test",
                 None,
                 None,
-                100,        // 10% dimming
+                100, // 10% dimming
             )
             .unwrap();
 
@@ -514,7 +499,7 @@ mod test_effect_nodes {
                 "test",
                 None,
                 None,
-                0,        // 0% dimming
+                0, // 0% dimming
             )
             .unwrap();
 
@@ -522,7 +507,6 @@ mod test_effect_nodes {
 
         run_node(node, &mut artnet_manager);
         println!("{:?}", artnet_manager.set_channel_log);
-
     }
 
     fn run_node(mut node: Box<dyn EffectNodeRuntime>, artnet_manager: &mut ArtnetManager) {

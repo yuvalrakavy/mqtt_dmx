@@ -5,7 +5,7 @@ use std::fmt::Display;
 use super::manager::ArrayManager;
 use super::error::DmxArrayError;
 use crate::defs::DmxArray;
-use crate::dmx::{ChannelType, UniverseChannelDefinitions};
+use crate::dmx::{UniverseChannelDefinitions, ChannelDefinition};
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum ChannelUsage {
@@ -110,19 +110,19 @@ impl ArrayManager {
                     };
 
                 for channel_definition in universe_channel_definition.channels.iter() {
-                    match channel_definition.channel_type {
-                        ChannelType::Single => {
-                            add_channel_usage(channel_definition.channel, ChannelUsage::S)?
+                    match channel_definition {
+                        ChannelDefinition::Single(s) => {
+                            add_channel_usage(*s, ChannelUsage::S)?
                         }
-                        ChannelType::Rgb => {
-                            add_channel_usage(channel_definition.channel, ChannelUsage::R)?;
-                            add_channel_usage(channel_definition.channel + 1, ChannelUsage::G)?;
-                            add_channel_usage(channel_definition.channel + 2, ChannelUsage::B)?;
+                        ChannelDefinition::Rgb(r, g, b) => {
+                            add_channel_usage(*r, ChannelUsage::R)?;
+                            add_channel_usage(*g, ChannelUsage::G)?;
+                            add_channel_usage(*b, ChannelUsage::B)?;
                         }
-                        ChannelType::TriWhite => {
-                            add_channel_usage(channel_definition.channel, ChannelUsage::W1)?;
-                            add_channel_usage(channel_definition.channel + 1, ChannelUsage::W2)?;
-                            add_channel_usage(channel_definition.channel + 2, ChannelUsage::W3)?;
+                        ChannelDefinition::TriWhite(w1, w2, w3) => {
+                            add_channel_usage(*w1, ChannelUsage::W1)?;
+                            add_channel_usage(*w2, ChannelUsage::W2)?;
+                            add_channel_usage(*w3, ChannelUsage::W3)?;
                         }
                     }
                 }

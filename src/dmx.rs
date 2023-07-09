@@ -3,25 +3,98 @@ use crate::defs::{DimmingAmount, TargetValue};
 use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
-pub enum ChannelType {
-    Rgb,
-    TriWhite,
-    Single,
+// #[derive(Debug, PartialEq, Eq, Copy, Clone)]
+// pub enum ChannelType {
+//     Rgb,
+//     TriWhite,
+//     Single,
+// }
+
+// #[derive(Debug, PartialEq, Eq)]
+// pub struct ChannelDefinition {
+//     pub channel: u16,
+//     pub channel_type: ChannelType,
+// }
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum ChannelDefinition {
+    Single(u16),
+    Rgb(u16, u16, u16),
+    TriWhite(u16, u16, u16),
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct ChannelDefinition {
-    pub channel: u16,
-    pub channel_type: ChannelType,
+impl FromStr for ChannelDefinition {
+    type Err = ArtnetError;
+
+    /// Parse a string into a ChannelDefinition
+    ///
+    /// string syntax
+    /// n -> ChannelDefinition { channel: n, channel_type: ChannelType::Single }
+    /// s:n -> ChannelDefinition { channel: n, channel_type: ChannelType::Single }
+    /// rgb:n -> ChannelDefinition { channel: n, channel_type: ChannelType::RGB }
+    /// w:n -> ChannelDefinition { channel: n, channel_type: ChannelType::TriWhite }
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        fn is_diff(c1: u16, c2: u16, c3: u16) -> Result<(), ArtnetError> {
+            if c1 == c2 || c1 == c3 || c2 == c3 {
+                return Err(ArtnetError::InvalidChannelAddress(format!(
+                    "rgb or w individual channel addresses must be different: {}, {}, {}",
+                    c1, c2, c3
+                )));
+            }
+            Ok(())
+        }
+        let column = s.find(':');
+
+        let (channel_type, channel) = match column {
+            Some(c) => (s[..c].trim(), s[c + 1..].trim()),
+            None => ("s", s.trim()),
+        };
+
+        let channels: Vec<u16> = channel
+            .split('/')
+            .map(|c| {
+                c.trim()
+                    .parse::<u16>()
+                    .map_err(|_| ArtnetError::InvalidChannelAddress(s.to_string()))
+            })
+            .collect::<Result<Vec<u16>, ArtnetError>>()?;
+
+        if channels.is_empty() {
+            return Err(ArtnetError::InvalidChannelAddress(s.to_string()));
+        }
+
+        Ok(match channel_type.to_lowercase().as_str() {
+            "rgb" => match channels.len() {
+                1 => ChannelDefinition::Rgb(channels[0], channels[0]+1, channels[0]+2),
+                3 => {
+                    is_diff(channels[0], channels[1], channels[2])?;
+                    ChannelDefinition::Rgb(channels[0], channels[1], channels[2])
+                }
+                _ => return Err(ArtnetError::InvalidChannelAddress(s.to_string())),
+            },
+            "w" => match channels.len() {
+                1 => ChannelDefinition::TriWhite(channels[0], channels[0]+1, channels[0]+2),
+                3 => {
+                    is_diff(channels[0], channels[1], channels[2])?;
+                    ChannelDefinition::TriWhite(channels[0], channels[1], channels[2])
+                }
+                _ => return Err(ArtnetError::InvalidChannelAddress(s.to_string())),
+            },
+            "s" => match channels.len() {
+                1 => ChannelDefinition::Single(channels[0]),
+                _ => return Err(ArtnetError::InvalidChannelAddress(s.to_string())),
+            },
+            _ => return Err(ArtnetError::InvalidChannelAddress(s.to_string())),
+        })
+    }
 }
 
 impl Display for ChannelDefinition {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self.channel_type {
-            ChannelType::Rgb => write!(f, "rgb({})", self.channel),
-            ChannelType::TriWhite => write!(f, "w({})", self.channel),
-            ChannelType::Single => write!(f, "s({})", self.channel),
+        match self {
+            ChannelDefinition::Rgb(r, g, b) => write!(f, "rgb:{}/{}/{}", r, g, b),
+            ChannelDefinition::TriWhite(w1, w2, w3) => write!(f, "w:{}/{}/{}", w1, w2, w3),
+            ChannelDefinition::Single(c) => write!(f, "s({})", c),
         }
     }
 }
@@ -41,7 +114,7 @@ pub enum DimmerValue {
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ChannelValue {
-    pub channel: u16,
+    pub channel: ChannelDefinition,
     pub value: DimmerValue,
 }
 
@@ -78,54 +151,24 @@ impl FromStr for DimmerValue {
     }
 }
 
-impl FromStr for ChannelDefinition {
-    type Err = ArtnetError;
-
-    /// Parse a string into a ChannelDefinition
-    ///
-    /// string syntax
-    /// n -> ChannelDefinition { channel: n, channel_type: ChannelType::Single }
-    /// s:n -> ChannelDefinition { channel: n, channel_type: ChannelType::Single }
-    /// rgb:n -> ChannelDefinition { channel: n, channel_type: ChannelType::RGB }
-    /// w:n -> ChannelDefinition { channel: n, channel_type: ChannelType::TriWhite }
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let column = s.find(':');
-
-        let (channel_type, channel) = match column {
-            Some(c) => (s[..c].trim(), s[c + 1..].trim()),
-            None => ("s", s.trim()),
-        };
-
-        let channel = channel
-            .parse::<u16>()
-            .map_err(|_| ArtnetError::InvalidChannelAddress(s.to_string()))?;
-
-        match channel_type.to_lowercase().as_str() {
-            "rgb" => Ok(ChannelDefinition {
-                channel,
-                channel_type: ChannelType::Rgb,
-            }),
-            "w" => Ok(ChannelDefinition {
-                channel,
-                channel_type: ChannelType::TriWhite,
-            }),
-            "s" => Ok(ChannelDefinition {
-                channel,
-                channel_type: ChannelType::Single,
-            }),
-            _ => Err(ArtnetError::InvalidChannelAddress(s.to_string())),
+impl Display for DimmerValue {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            DimmerValue::Rgb(r, g, b) => write!(f, "rgb({},{},{})", r, g, b),
+            DimmerValue::TriWhite(w1, w2, w3) => write!(f, "w({},{},{})", w1, w2, w3),
+            DimmerValue::Single(v) => write!(f, "s({})", v)
         }
     }
 }
 
 impl TargetValue {
-    pub fn get(&self, channel_type: ChannelType) -> Option<DimmerValue> {
-        match channel_type {
-            ChannelType::Rgb => self.rgb.map(|(r, g, b)| DimmerValue::Rgb(r, g, b)),
-            ChannelType::TriWhite => self
+    pub fn get(&self, channel_definition: &ChannelDefinition) -> Option<DimmerValue> {
+        match channel_definition {
+            ChannelDefinition::Rgb(_, _, _) => self.rgb.map(|(r, g, b)| DimmerValue::Rgb(r, g, b)),
+            ChannelDefinition::TriWhite(_, _, _) => self
                 .tri_white
                 .map(|(w1, w2, w3)| DimmerValue::TriWhite(w1, w2, w3)),
-            ChannelType::Single => self.single.map(DimmerValue::Single),
+            ChannelDefinition::Single(_) => self.single.map(DimmerValue::Single),
         }
     }
 
@@ -145,7 +188,9 @@ impl TargetValue {
                     (w3 as DimmingAmount * dimming_amount / 1000) as u8,
                 )
             }),
-            single: self.single.map(|v| (v as DimmingAmount * dimming_amount / 1000) as u8),
+            single: self
+                .single
+                .map(|v| (v as DimmingAmount * dimming_amount / 1000) as u8),
         }
     }
 }
@@ -209,40 +254,22 @@ mod test_parse_value {
     #[test]
     fn test_channel_definition() {
         let v = "rgb:1".parse::<ChannelDefinition>().unwrap();
-        assert_eq!(
-            v,
-            ChannelDefinition {
-                channel: 1,
-                channel_type: ChannelType::Rgb,
-            }
-        );
+        assert_eq!(v, ChannelDefinition::Rgb(1, 2, 3));
+
+        let v = "rgb:1/3/5".parse::<ChannelDefinition>().unwrap();
+        assert_eq!(v, ChannelDefinition::Rgb(1, 3, 5));
 
         let v = "s:2".parse::<ChannelDefinition>().unwrap();
-        assert_eq!(
-            v,
-            ChannelDefinition {
-                channel: 2,
-                channel_type: ChannelType::Single,
-            }
-        );
+        assert_eq!(v, ChannelDefinition::Single(2));
 
         let v = "2".parse::<ChannelDefinition>().unwrap();
-        assert_eq!(
-            v,
-            ChannelDefinition {
-                channel: 2,
-                channel_type: ChannelType::Single,
-            }
-        );
+        assert_eq!(v, ChannelDefinition::Single(2));
 
         let v = "w:3".parse::<ChannelDefinition>().unwrap();
-        assert_eq!(
-            v,
-            ChannelDefinition {
-                channel: 3,
-                channel_type: ChannelType::TriWhite,
-            }
-        );
+        assert_eq!(v, ChannelDefinition::TriWhite(3, 4, 5));
+
+        let v = "w:3/10/400".parse::<ChannelDefinition>().unwrap();
+        assert_eq!(v, ChannelDefinition::TriWhite(3, 10, 400));
     }
 
     #[test]
@@ -251,28 +278,34 @@ mod test_parse_value {
             .parse::<TargetValue>()
             .unwrap();
 
-        assert_eq!(v.get(ChannelType::Single), Some(DimmerValue::Single(10)));
-        assert_eq!(v.get(ChannelType::Rgb), Some(DimmerValue::Rgb(10, 20, 30)));
         assert_eq!(
-            v.get(ChannelType::TriWhite),
+            v.get(&ChannelDefinition::Single(1)),
+            Some(DimmerValue::Single(10))
+        );
+        assert_eq!(
+            v.get(&ChannelDefinition::Rgb(1, 2, 3)),
+            Some(DimmerValue::Rgb(10, 20, 30))
+        );
+        assert_eq!(
+            v.get(&ChannelDefinition::TriWhite(1, 2, 3)),
             Some(DimmerValue::TriWhite(5, 6, 7))
         );
 
         let v = "s(10)".parse::<TargetValue>().unwrap();
-        assert_eq!(v.get(ChannelType::Single), Some(DimmerValue::Single(10)));
-        assert_eq!(v.get(ChannelType::Rgb), None);
-        assert_eq!(v.get(ChannelType::TriWhite), None);
+        assert_eq!(v.get(&ChannelDefinition::Single(10)), Some(DimmerValue::Single(10)));
+        assert_eq!(v.get(&ChannelDefinition::Rgb(5,4,2)), None);
+        assert_eq!(v.get(&ChannelDefinition::TriWhite(1,2,3)), None);
 
         let v = "rgb(10,20,30)".parse::<TargetValue>().unwrap();
-        assert_eq!(v.get(ChannelType::Single), None);
-        assert_eq!(v.get(ChannelType::Rgb), Some(DimmerValue::Rgb(10, 20, 30)));
-        assert_eq!(v.get(ChannelType::TriWhite), None);
+        assert_eq!(v.get(&ChannelDefinition::Single(1)), None);
+        assert_eq!(v.get(&ChannelDefinition::Rgb(1,3,4)), Some(DimmerValue::Rgb(10, 20, 30)));
+        assert_eq!(v.get(&ChannelDefinition::TriWhite(2,3,4)), None);
 
         let v = "w(5,6,7)".parse::<TargetValue>().unwrap();
-        assert_eq!(v.get(ChannelType::Single), None);
-        assert_eq!(v.get(ChannelType::Rgb), None);
+        assert_eq!(v.get(&ChannelDefinition::Single(1)), None);
+        assert_eq!(v.get(&ChannelDefinition::Rgb(5,4,2)), None);
         assert_eq!(
-            v.get(ChannelType::TriWhite),
+            v.get(&ChannelDefinition::TriWhite(1,2,3)),
             Some(DimmerValue::TriWhite(5, 6, 7))
         );
 
