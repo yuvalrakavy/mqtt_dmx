@@ -289,12 +289,9 @@ impl MqttSubscriber {
         payload: &Bytes,
     ) -> Result<(), MqttMessageError> {
         match command {
-            "On" | "Off" => {
-                let usage = if command == "On" {
-                    EffectUsage::On
-                } else {
-                    EffectUsage::Off
-                };
+            "On" | "Off" | "Dim" => {
+                let usage = command.parse::<EffectUsage>().unwrap();
+
                 let command_parameters =
                     serde_json::from_slice::<defs::OnOffCommandParameters>(payload).map_err(|e| {
                         MqttMessageError::JsonParseError(

@@ -14,6 +14,7 @@ pub struct ArrayManager {
     pub(super) values: HashMap<String, String>,
     pub(super) default_on_effect: EffectNodeDefinition,
     pub(super) default_off_effect: EffectNodeDefinition,
+    pub(super) default_dim_effect: EffectNodeDefinition,
 }
 
 impl ArrayManager {
@@ -22,21 +23,30 @@ impl ArrayManager {
         {
             "type": "fade",
             "lights": "@all",
-            "ticks": "`ticks=10`",
+            "ticks": "`on_ticks=10`",
             "target": "`target=s(255);rgb(255,255,255);w(255,255,255)`"
         }"#;
         let default_off_json = r#"
         {
             "type": "fade",
             "lights": "@all",
-            "ticks": "`ticks=10`",
+            "ticks": "`off_ticks=10`",
             "target": "`target=s(0);rgb(0,0,0);w(0,0,0)`"
+        }"#;
+        let default_dim_json = r#"
+        {
+            "type": "fade",
+            "lights": "@all",
+            "ticks": "`dim_ticks=10`",
+            "target": "`target=s(255);rgb(255,255,255);w(255,255,255)`"
         }"#;
 
         let default_on_effect =
             serde_json::from_str::<EffectNodeDefinition>(default_on_json).unwrap();
         let default_off_effect =
             serde_json::from_str::<EffectNodeDefinition>(default_off_json).unwrap();
+        let default_dim_effect =
+            serde_json::from_str::<EffectNodeDefinition>(default_dim_json).unwrap();
 
         Self {
             arrays: HashMap::new(),
@@ -44,6 +54,7 @@ impl ArrayManager {
             values: HashMap::new(),
             default_on_effect,
             default_off_effect,
+            default_dim_effect,
         }
     }
 

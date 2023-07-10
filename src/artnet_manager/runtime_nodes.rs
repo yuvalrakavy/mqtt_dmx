@@ -125,7 +125,7 @@ impl defs::FadeEffectNodeDefinition {
             .map_err(|e| {
                 DmxArrayError::ValueError(scope.to_string(), "fade target parameter", e.to_string())
             })?
-            .get_dimmed_value(scope.dimming_amount);
+            .get_dimmed_value(if self.no_dimming { defs::DIMMING_AMOUNT_MAX } else { scope.dimming_amount });
 
         Ok(Box::new(FadeEffectNode {
             lights,

@@ -2,6 +2,7 @@ use serde::Deserialize;
 use std::net::IpAddr;
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::str::FromStr;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct UniverseDefinition {
@@ -33,6 +34,8 @@ pub struct DmxArray {
     pub on: String,
     #[serde(default="default_off_effect_id")]
     pub off: String,
+    #[serde(default="default_dim_effect_id")]
+    pub dim: String,
     #[serde(default)]
     pub effects: HashMap<String, EffectNodeDefinition>,
     #[serde(default)]
@@ -48,6 +51,11 @@ fn default_on_effect_id() -> String {
 fn default_off_effect_id() -> String {
     "off".to_string()
 }
+
+fn default_dim_effect_id() -> String {
+    "dim".to_string()
+}
+
 /// Dmx Array Preset
 #[derive(Debug, Deserialize)]
 pub struct DmxArrayPreset {
@@ -55,6 +63,7 @@ pub struct DmxArrayPreset {
     pub values: HashMap<String, String>,
     pub on: Option<String>,
     pub off: Option<String>,
+    pub dim: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -75,8 +84,21 @@ pub enum NumberOrVariable {
 pub enum EffectUsage {
     On,
     Off,
+    Dim,
 }
 
+impl FromStr for EffectUsage {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "On" => Ok(EffectUsage::On),
+            "Off" => Ok(EffectUsage::Off),
+            "Dim" => Ok(EffectUsage::Dim),
+            _ => panic!("Invalid effect usage: {}", s),
+        }
+    }
+}
 /// Effect modes
 
 #[derive(Deserialize, Debug)]
@@ -109,6 +131,8 @@ pub struct FadeEffectNodeDefinition {
     pub lights: String,
     pub ticks: NumberOrVariable,
     pub target: String,
+    #[serde(default)]
+    pub no_dimming: bool,    
 }
 
 // Commands

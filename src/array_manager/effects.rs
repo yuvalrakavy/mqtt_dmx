@@ -52,6 +52,7 @@ impl ArrayManager {
                 let (preset_effect_id, default_effect_id) = match usage {
                     EffectUsage::On => (&preset.on, &array.on),
                     EffectUsage::Off => (&preset.off, &array.off),
+                    &EffectUsage::Dim => (&preset.dim, &array.dim),
                 };
 
                 Ok(preset_effect_id
@@ -68,6 +69,7 @@ impl ArrayManager {
             Ok(match usage {
                 EffectUsage::On => array.on.clone(),
                 EffectUsage::Off => array.off.clone(),
+                &EffectUsage::Dim => array.dim.clone(),
             })
         }
     }
@@ -86,6 +88,7 @@ impl ArrayManager {
             .or_else(|| match usage {
                 EffectUsage::On if effect_id == array.on => Some(&self.default_on_effect),
                 EffectUsage::Off if effect_id == array.off => Some(&self.default_off_effect),
+                &EffectUsage::Dim if effect_id == array.dim => Some(&self.default_dim_effect),
                 _ => None,
             });
 
