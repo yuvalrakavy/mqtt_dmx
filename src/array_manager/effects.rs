@@ -22,6 +22,16 @@ impl defs::EffectNodeDefinition {
 }
 
 impl ArrayManager {
+    pub(super) fn add_effect(&mut self, effect_id: &str, effect: EffectNodeDefinition) -> Result<(), DmxArrayError> {
+        self.effects.insert(effect_id.to_string(), effect);
+        Ok(())
+    }
+
+    pub(super) fn remove_effect(&mut self, effect_id: &str) -> Result<(), DmxArrayError> {
+        self.effects.remove(effect_id);
+        Ok(())
+    }
+
     //
     // Get effect definition by looking for the effect_id in the array effects list, then the global effects list.
     // If the effect_id is not found, return None.

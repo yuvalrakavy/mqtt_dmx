@@ -98,6 +98,14 @@ impl ArrayManager {
                 reply_tx.send(self.remove_values()).unwrap()
             }
 
+            ToArrayManagerMessage::AddEffect(effect_id, effect, reply_tx) => {
+                reply_tx.send(self.add_effect(&effect_id, effect)).unwrap()
+            }
+
+            ToArrayManagerMessage::RemoveEffect(effect_id, reply_tx) => {
+                reply_tx.send(self.remove_effect(&effect_id)).unwrap()
+            }
+
             ToArrayManagerMessage::GetEffectRuntime(
                 array_id,
                 effect_usage,
