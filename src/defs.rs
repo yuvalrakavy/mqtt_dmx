@@ -21,6 +21,11 @@ pub struct UniverseDefinition {
     pub disable_send: bool,     // Disable sending DMX packets for testing
 }
 
+#[derive(Debug, Deserialize, Clone)]
+pub struct ValueDefinition {
+    pub value: String,
+}
+
 pub type DimmingAmount = usize;
 pub const DIMMING_AMOUNT_MAX: DimmingAmount = 1000;
 

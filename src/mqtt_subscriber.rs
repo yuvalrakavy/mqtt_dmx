@@ -131,7 +131,7 @@ impl MqttSubscriber {
                         self.handle_command_message(topic_parts[2], payload).await
                     }
                 }
-                "Values" => {
+                "Value" => {
                     if topic_parts.len() != 3 {
                         Err(MqttMessageError::MissingCommand)
                     } else {
@@ -276,14 +276,14 @@ impl MqttSubscriber {
                 return Err(MqttMessageError::ArrayOperationError(e));
             }
         } else {
-            match serde_json::from_slice::<String>(payload) {
-                Ok(value) => {
+            match serde_json::from_slice::<defs::ValueDefinition>(payload) {
+                Ok(value_definition) => {
                     let (tx, rx) = oneshot::channel::<Result<(), DmxArrayError>>();
 
                     self.to_array_tx
                         .send(messages::ToArrayManagerMessage::AddValue(
                             value_name.to_owned(),
-                            value,
+                            value_definition.value,
                             tx,
                         ))
                         .await
