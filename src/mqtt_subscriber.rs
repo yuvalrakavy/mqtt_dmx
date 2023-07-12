@@ -12,7 +12,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     array_manager::DmxArrayError,
     artnet_manager::{ArtnetError, EffectNodeRuntime},
-    defs::{self, DIMMING_AMOUNT_MAX, EffectNodeDefinition},
+    defs::{self, EffectNodeDefinition, DIMMING_AMOUNT_MAX},
     defs::{EffectUsage, UniverseDefinition},
     messages,
 };
@@ -133,11 +133,11 @@ impl MqttSubscriber {
                     }
                 }
                 "Values" => self.handle_values_message(payload).await,
-                "Effects" => {
+                "Effect" => {
                     if topic_parts.len() != 3 {
                         Err(MqttMessageError::MissingCommand)
                     } else {
-                        self.handle_effects_message(topic_parts[2], payload).await
+                        self.handle_effect_message(topic_parts[2], payload).await
                     }
                 }
                 "Error" | "LastError" | "Active" => Ok(()), // Ignore any message posted to Error subtopic since it is published by this service
@@ -290,15 +290,26 @@ impl MqttSubscriber {
         Ok(())
     }
 
-    async fn handle_effects_message(
+    async fn handle_effect_message(
         &self,
         effect_id: &str,
         payload: &Bytes,
     ) -> Result<(), MqttMessageError> {
         if payload.is_empty() {
+            let (tx, rx) = oneshot::channel::<Result<(), DmxArrayError>>();
 
-        }
-        else {
+            self.to_array_tx
+                .send(messages::ToArrayManagerMessage::RemoveEffect(
+                    effect_id.to_string(),
+                    tx,
+                ))
+                .await
+                .unwrap();
+
+            if let Err(e) = rx.await.unwrap() {
+                return Err(MqttMessageError::ArrayOperationError(e));
+            }
+        } else {
             match serde_json::from_slice::<EffectNodeDefinition>(payload) {
                 Ok(effect_definition) => {
                     let (tx, rx) = oneshot::channel::<Result<(), DmxArrayError>>();
