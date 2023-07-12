@@ -1,19 +1,16 @@
-
-use std::collections::HashMap;
-
 use super::manager::ArrayManager;
 use super::error::DmxArrayError;
 use super::Scope;
 
 
 impl ArrayManager {
-    pub (super) fn add_values(&mut self, values: HashMap<String, String>) -> Result<(), DmxArrayError> {
-        self.values = values;
+    pub (super) fn add_value(&mut self, value_name: &str,  value: &str) -> Result<(), DmxArrayError> {
+        self.values.insert(value_name.to_string(), value.to_string());
         Ok(())
     }
 
-    pub (super) fn remove_values(&mut self) -> Result<(), DmxArrayError>{
-        self.values.clear();
+    pub (super) fn remove_value(&mut self, value_name: &str) -> Result<(), DmxArrayError>{
+        self.values.remove(value_name);
         Ok(())
     }
 

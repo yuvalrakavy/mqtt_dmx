@@ -319,7 +319,7 @@ mod test_effect_nodes {
             .add_universe("0", get_universe_definition())
             .unwrap();
 
-        array_manager.add_array("test", array).unwrap();
+        array_manager.add_array("test", Box::new(array)).unwrap();
         let node = array_manager
             .get_usage_effect_runtime(
                 &defs::EffectUsage::On,
@@ -446,7 +446,7 @@ mod test_effect_nodes {
             .add_universe("0", get_universe_definition())
             .unwrap();
 
-        array_manager.add_array("test", array).unwrap();
+        array_manager.add_array("test", Box::new(array)).unwrap();
 
         let node = array_manager
             .get_usage_effect_runtime(

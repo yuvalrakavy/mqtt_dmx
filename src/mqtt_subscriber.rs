@@ -1,7 +1,6 @@
 use bytes::Bytes;
 use log::{error, info};
 use rumqttc::{EventLoop, Packet};
-use std::collections::HashMap;
 use thiserror::Error;
 use tokio::{
     select,
@@ -132,7 +131,13 @@ impl MqttSubscriber {
                         self.handle_command_message(topic_parts[2], payload).await
                     }
                 }
-                "Values" => self.handle_values_message(payload).await,
+                "Values" => {
+                    if topic_parts.len() != 3 {
+                        Err(MqttMessageError::MissingCommand)
+                    } else {
+                        self.handle_value_message(topic_parts[2], payload).await
+                    }
+                }
                 "Effect" => {
                     if topic_parts.len() != 3 {
                         Err(MqttMessageError::MissingCommand)
@@ -228,7 +233,7 @@ impl MqttSubscriber {
                     self.to_array_tx
                         .send(messages::ToArrayManagerMessage::AddArray(
                             array_id.to_string(),
-                            definition,
+                            Box::new(definition),
                             tx,
                         ))
                         .await
@@ -251,12 +256,19 @@ impl MqttSubscriber {
         Ok(())
     }
 
-    async fn handle_values_message(&self, payload: &Bytes) -> Result<(), MqttMessageError> {
+    async fn handle_value_message(
+        &self,
+        value_name: &str,
+        payload: &Bytes,
+    ) -> Result<(), MqttMessageError> {
         if payload.is_empty() {
             let (tx, rx) = oneshot::channel::<Result<(), DmxArrayError>>();
 
             self.to_array_tx
-                .send(messages::ToArrayManagerMessage::RemoveValues(tx))
+                .send(messages::ToArrayManagerMessage::RemoveValue(
+                    value_name.to_owned(),
+                    tx,
+                ))
                 .await
                 .unwrap();
 
@@ -264,12 +276,16 @@ impl MqttSubscriber {
                 return Err(MqttMessageError::ArrayOperationError(e));
             }
         } else {
-            match serde_json::from_slice::<HashMap<String, String>>(payload) {
-                Ok(values) => {
+            match serde_json::from_slice::<String>(payload) {
+                Ok(value) => {
                     let (tx, rx) = oneshot::channel::<Result<(), DmxArrayError>>();
 
                     self.to_array_tx
-                        .send(messages::ToArrayManagerMessage::AddValues(values, tx))
+                        .send(messages::ToArrayManagerMessage::AddValue(
+                            value_name.to_owned(),
+                            value,
+                            tx,
+                        ))
                         .await
                         .unwrap();
 

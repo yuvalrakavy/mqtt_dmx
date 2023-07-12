@@ -23,7 +23,7 @@ pub enum ToMqttPublisherMessage {
 
 #[derive(Debug)]
 pub enum ToArrayManagerMessage {
-    AddArray(String, defs::DmxArray, Sender<Result<(), DmxArrayError>>),
+    AddArray(String, Box<defs::DmxArray>, Sender<Result<(), DmxArrayError>>),
     RemoveArray(String, Sender<Result<(), DmxArrayError>>),
 
     AddEffect(String, defs::EffectNodeDefinition, Sender<Result<(), DmxArrayError>>),
@@ -31,6 +31,6 @@ pub enum ToArrayManagerMessage {
 
     GetEffectRuntime(String, EffectUsage, Option<usize>, Option<HashMap<String, String>>, usize, Sender<Result<Box<dyn EffectNodeRuntime>, DmxArrayError>>),
 
-    AddValues(HashMap<String, String>, Sender<Result<(), DmxArrayError>>),
-    RemoveValues(Sender<Result<(), DmxArrayError>>),
+    AddValue(String, String, Sender<Result<(), DmxArrayError>>),
+    RemoveValue(String, Sender<Result<(), DmxArrayError>>),
 }

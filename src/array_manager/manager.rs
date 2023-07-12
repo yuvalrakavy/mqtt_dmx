@@ -9,7 +9,7 @@ use crate::messages::ToArrayManagerMessage;
 
 #[derive(Debug)]
 pub struct ArrayManager {
-    pub(super) arrays: HashMap<String, DmxArray>,
+    pub(super) arrays: HashMap<String, Box<DmxArray>>,
     pub(super) effects: HashMap<String, EffectNodeDefinition>,
     pub(super) values: HashMap<String, String>,
     pub(super) default_on_effect: EffectNodeDefinition,
@@ -61,7 +61,7 @@ impl ArrayManager {
     pub fn add_array(
         &mut self,
         array_id: impl Into<String>,
-        array: DmxArray,
+        array: Box<DmxArray>,
     ) -> Result<(), DmxArrayError> {
         let array_id = array_id.into();
         self.verify_array(&array_id, &array)?;
@@ -75,9 +75,10 @@ impl ArrayManager {
     }
 
     pub(super) fn get_array(&self, array_id: &str) -> Result<&DmxArray, DmxArrayError> {
-        self.arrays
-            .get(array_id)
-            .ok_or_else(|| DmxArrayError::ArrayNotFound(array_id.to_string()))
+        match self.arrays.get(array_id) {
+            None => Err(DmxArrayError::ArrayNotFound(array_id.to_string())),
+            Some(array) => Ok(array),
+        }
     }
 
     fn handle_message(&mut self, message: ToArrayManagerMessage) {
@@ -90,12 +91,12 @@ impl ArrayManager {
                 reply_tx.send(self.remove_array(array_id)).unwrap()
             }
 
-            ToArrayManagerMessage::AddValues(values, reply_tx) => {
-                reply_tx.send(self.add_values(values)).unwrap()
+            ToArrayManagerMessage::AddValue(value_name, value, reply_tx) => {
+                reply_tx.send(self.add_value(&value_name, &value)).unwrap()
             }
 
-            ToArrayManagerMessage::RemoveValues(reply_tx) => {
-                reply_tx.send(self.remove_values()).unwrap()
+            ToArrayManagerMessage::RemoveValue(value_name, reply_tx) => {
+                reply_tx.send(self.remove_value(&value_name)).unwrap()
             }
 
             ToArrayManagerMessage::AddEffect(effect_id, effect, reply_tx) => {
