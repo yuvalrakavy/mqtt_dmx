@@ -29,7 +29,7 @@ pub enum ToArrayManagerMessage {
     AddEffect(String, defs::EffectNodeDefinition, Sender<Result<(), DmxArrayError>>),
     RemoveEffect(String, Sender<Result<(), DmxArrayError>>),
 
-    GetEffectRuntime(String, EffectUsage, Option<usize>, Option<HashMap<String, String>>, usize, Sender<Result<Box<dyn EffectNodeRuntime>, DmxArrayError>>),
+    GetEffectRuntime(String, EffectUsage, Option<String>, Option<HashMap<String, String>>, usize, Sender<Result<Box<dyn EffectNodeRuntime>, DmxArrayError>>),
 
     AddValue(String, String, Sender<Result<(), DmxArrayError>>),
     RemoveValue(String, Sender<Result<(), DmxArrayError>>),

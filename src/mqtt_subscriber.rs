@@ -386,7 +386,7 @@ impl MqttSubscriber {
                     .send(messages::ToArrayManagerMessage::GetEffectRuntime(
                         command_parameters.array_id,
                         usage,
-                        command_parameters.preset_number,
+                        command_parameters.effect_id,
                         command_parameters.values,
                         command_parameters
                             .dimming_amount

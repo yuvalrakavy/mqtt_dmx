@@ -10,7 +10,7 @@ use crate::defs::DimmingAmount;
 pub struct Scope<'a> {
     array_manager: &'a ArrayManager,
     pub array_id: String,
-    pub preset_number: Option<usize>,
+    pub effect_id: Option<String>,
     pub values: Option<HashMap<String, String>>,
     pub dimming_amount: DimmingAmount,
 }
@@ -21,8 +21,8 @@ impl std::fmt::Display for Scope<'_> {
 
         write!(f, "Array '{}' ({})", self.array_id, array_description)?;
 
-        if let Some(preset_number) = self.preset_number {
-            write!(f, " preset# {}", preset_number)?;
+        if let Some(ref effect_id) = self.effect_id {
+            write!(f, " effect {}", effect_id)?;
         }
 
         Ok(())
@@ -30,7 +30,7 @@ impl std::fmt::Display for Scope<'_> {
 }
 
 impl Scope<'_> {
-    pub fn new(array_manager: &ArrayManager, array_id: impl Into<String>, preset_number: Option<usize>, values: Option<HashMap<String, String>>, dimming_amount: DimmingAmount) -> Result<Scope, DmxArrayError> {
+    pub fn new<'a>(array_manager: &'a ArrayManager, array_id: impl Into<String>, effect_id: &Option<String>, values: Option<HashMap<String, String>>, dimming_amount: DimmingAmount) -> Result<Scope<'a>, DmxArrayError> {
         let array_id = array_id.into();
         let array = array_manager.arrays.get(&array_id);
 
@@ -38,18 +38,10 @@ impl Scope<'_> {
             return Err(DmxArrayError::ArrayNotFound(array_id));
         }
 
-        let array = array.unwrap();
-
-        if let Some(preset_number) = preset_number {
-            if preset_number >= array.presets.len() {
-                return Err(DmxArrayError::ArrayPresetNotFound(array_id, preset_number));
-            }
-        }
-
         Ok(Scope {
             array_manager,
             array_id,
-            preset_number,
+            effect_id: effect_id.clone(),
             values,
             dimming_amount,
         })

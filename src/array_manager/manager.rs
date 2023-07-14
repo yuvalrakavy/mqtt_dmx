@@ -110,7 +110,7 @@ impl ArrayManager {
             ToArrayManagerMessage::GetEffectRuntime(
                 array_id,
                 effect_usage,
-                preset_number,
+                effect_id,
                 values,
                 dimming_amount,
                 reply_tx,
@@ -118,7 +118,7 @@ impl ArrayManager {
                 .send(self.get_usage_effect_runtime(
                     &effect_usage,
                     &array_id,
-                    preset_number,
+                    &effect_id,
                     values,
                     dimming_amount,
                 ))

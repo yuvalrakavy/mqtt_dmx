@@ -34,40 +34,7 @@ impl Display for ChannelUsage {
 
 impl ArrayManager {
     pub (super) fn verify_array(&self, array_id: &str, array: &DmxArray) -> Result<(), DmxArrayError> {
-        self.verify_array_effects(array_id, array)?;
         Self::verify_array_lights(array_id, array)?;
-        Ok(())
-    }
-
-    pub (super) fn verify_array_effects(&self, array_id: &str, array: &DmxArray) -> Result<(), DmxArrayError> {
-        let has_effect = |effect_name: &str| {
-            array.effects.get(effect_name).is_some() || self.effects.get(effect_name).is_some()
-        };
-
-        for (preset_number, preset) in array.presets.iter().enumerate() {
-            if let Some(ref effect_name) = preset.on {
-                if !has_effect(effect_name) {
-                    return Err(DmxArrayError::ArrayPresetEffectNotFound(
-                        array_id.to_string(),
-                        preset_number,
-                        "on",
-                        effect_name.to_string(),
-                    ));
-                }
-            }
-
-            if let Some(ref effect_name) = preset.off {
-                if !has_effect(effect_name) {
-                    return Err(DmxArrayError::ArrayPresetEffectNotFound(
-                        array_id.to_string(),
-                        preset_number,
-                        "off",
-                        effect_name.to_string(),
-                    ));
-                }
-            }
-        }
-
         Ok(())
     }
 

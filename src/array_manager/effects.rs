@@ -52,30 +52,13 @@ impl ArrayManager {
         &self,
         usage: &EffectUsage,
         array_id: &str,
-        preset_number: Option<usize>,
+        effect_id: &Option<String>
     ) -> Result<String, DmxArrayError> {
-        let array = self.get_array(array_id)?;
-
-        if let Some(preset_number) = preset_number {
-            if preset_number < array.presets.len() {
-                let preset = &array.presets[preset_number];
-                let (preset_effect_id, default_effect_id) = match usage {
-                    EffectUsage::On => (&preset.on, &array.on),
-                    EffectUsage::Off => (&preset.off, &array.off),
-                    &EffectUsage::Dim => (&preset.dim, &array.dim),
-                };
-
-                Ok(preset_effect_id
-                    .as_ref()
-                    .cloned()
-                    .unwrap_or(default_effect_id.to_string()))
-            } else {
-                Err(DmxArrayError::ArrayPresetNotFound(
-                    array_id.to_string(),
-                    preset_number,
-                ))
-            }
+        if let Some(effect_id) = effect_id {
+            Ok(effect_id.clone())
         } else {
+            let array = self.get_array(array_id)?;
+
             Ok(match usage {
                 EffectUsage::On => array.on.clone(),
                 EffectUsage::Off => array.off.clone(),
@@ -88,9 +71,9 @@ impl ArrayManager {
         &self,
         usage: &EffectUsage,
         array_id: &str,
-        preset_number: Option<usize>,
+        effect_id: &Option<String>,
     ) -> Result<&EffectNodeDefinition, DmxArrayError> {
-        let effect_id = self.get_usage_effect_id(usage, array_id, preset_number)?;
+        let effect_id = self.get_usage_effect_id(usage, array_id, effect_id)?;
         let array = self.get_array(array_id)?;
 
         let effect_definition = self
@@ -114,12 +97,12 @@ impl ArrayManager {
         &self,
         usage: &EffectUsage,
         array_id: &str,
-        preset_number: Option<usize>,
+        effect_id: &Option<String>,
         values: Option<HashMap<String, String>>,
         dimming_amount: DimmingAmount,
     ) -> Result<Box<dyn EffectNodeRuntime>, DmxArrayError> {
-        let effect_definition = self.get_usage_effect_definition(usage, array_id, preset_number)?;
-        let scope = super::Scope::new(self, array_id, preset_number, values, dimming_amount)?;
+        let effect_definition = self.get_usage_effect_definition(usage, array_id, effect_id)?;
+        let scope = super::Scope::new(self, array_id, effect_id, values, dimming_amount)?;
 
         effect_definition.get_runtime_node(&scope)
     }

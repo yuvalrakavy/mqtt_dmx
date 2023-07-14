@@ -45,8 +45,6 @@ pub struct DmxArray {
     pub effects: HashMap<String, EffectNodeDefinition>,
     #[serde(default)]
     pub values: HashMap<String, String>,
-    #[serde(default)]
-    pub presets: Vec<DmxArrayPreset>,
 }
 
 fn default_on_effect_id() -> String {
@@ -59,16 +57,6 @@ fn default_off_effect_id() -> String {
 
 fn default_dim_effect_id() -> String {
     "dim".to_string()
-}
-
-/// Dmx Array Preset
-#[derive(Debug, Deserialize)]
-pub struct DmxArrayPreset {
-    #[serde(default)]
-    pub values: HashMap<String, String>,
-    pub on: Option<String>,
-    pub off: Option<String>,
-    pub dim: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -147,7 +135,7 @@ pub struct FadeEffectNodeDefinition {
 #[derive(Deserialize, Debug)]
 pub struct OnOffCommandParameters {
     pub array_id: String,
-    pub preset_number: Option<usize>,
+    pub effect_id: Option<String>,
     pub values: Option<HashMap<String, String>>,
     pub dimming_amount: Option<DimmingAmount>,
 }

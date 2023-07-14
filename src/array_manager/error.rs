@@ -19,20 +19,11 @@ pub enum DmxArrayError {
     #[error("Effect '{0}' not found in array '{1}' or in global effects list")]
     EffectNotFound(String, String),
 
-    #[error("Array '{0}' has no preset# {1} defined")]
-    ArrayPresetNotFound(String, usize),
-
-    #[error("Array '{0}' preset# {1} '{2}' has no value for {3}")]
-    ArrayPresetValueNotFound(String, usize, String, String),
-
     #[error("Array '{0}' '{1}' has no value for {2}")]
     ArrayValueNotFound(String, String, String),
 
     #[error("Array '{0}' '{1}' has unterminated `value` expression")]
     ValueExpressionNotTerminated(String, String),
-
-    #[error("Array '{0}' preset {1} '{2}' effect is '{3}' which is not defined")]
-    ArrayPresetEffectNotFound(String, usize, &'static str, String),
 
     #[error("Array '{0}' in universe '{1}': channel {2} was defined as {3} and is redefined as {4} in group @{5}")]
     ArrayLightChannelUsageMismatch(String, String, u16, ChannelUsage, ChannelUsage, String),
