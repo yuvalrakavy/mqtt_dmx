@@ -89,51 +89,6 @@ fn test_verify_array() {
                 "universe_id": "0",
                 "description": "Test array",
                 "lights": {
-                    "all": "rgb:10"
-                },
-                "dimmer_level": 1000,
-                "effects": {
-                    "on": {
-                        "type": "fade",
-                        "lights": "@all",
-                        "ticks": 10,
-                        "target": "s(255); rgb(255,255,255); w(255)"
-                    },
-                    "off": {
-                        "type": "fade",
-                        "lights": "@all",
-                        "ticks": 10,
-                        "target": "s(0); rgb(0,0,0); w(0)"
-                    }
-                },
-                "values": {
-                },
-                "presets": [
-                    {
-                        "on": "custom",
-                        "values": {
-                        }
-                    }
-                ]
-            }"#;
-
-    let array = serde_json::from_str::<DmxArray>(array_json).unwrap();
-
-    if let Err(e) = array_manager.add_array("test3", Box::new(array)) {
-        let t = e.to_string();
-        assert_eq!(
-            t,
-            "Array 'test3' preset 0 'on' effect is 'custom' which is not defined"
-        );
-    } else {
-        panic!("Expected error");
-    }
-
-    let array_json = r#"
-            {
-                "universe_id": "0",
-                "description": "Test array",
-                "lights": {
                     "all": "@center,@spot,@frame"
                 },
                 "dimmer_level": 1000,
@@ -168,7 +123,7 @@ fn test_verify_array() {
         let t = e.to_string();
         assert_eq!(
             t,
-            "Array 'test3' preset 0 'off' effect is 'custom' which is not defined"
+            "Array 'test3' Lights @all -> @center,@spot,@frame does not contain definition for center"
         );
     } else {
         panic!("Expected error");
@@ -441,7 +396,7 @@ fn test_expand_values() {
                     "test": "test-array-value",
                     "test2": "test2-array-value",
                     "ticks": "20"
-                },
+                }
             }"#;
 
     let array = serde_json::from_str::<DmxArray>(array_json).unwrap();
@@ -458,7 +413,7 @@ fn test_expand_values() {
 
     let scope = Scope::new(&&array_manager, "test", &None, None, DIMMING_AMOUNT_MAX).unwrap();
     let result = scope.expand_values("hello `test2` world").unwrap();
-    assert_eq!(result, "hello test2-preset-value world");
+    assert_eq!(result, "hello test2-array-value world");
 
     let scope = Scope::new(
         &array_manager,
@@ -481,7 +436,7 @@ fn test_expand_values() {
         let t = e.to_string();
         assert_eq!(
             t,
-            "Array 'test' preset# 0 'hello `NONE` world' has no value for NONE"
+            "Array 'test' 'hello `NONE` world' has no value for NONE"
         );
     }
 
@@ -516,7 +471,7 @@ fn test_effect_management() {
 
     let on_effect = array_manager.get_usage_effect_definition(&defs::EffectUsage::On, "test", &None).unwrap();
     let t = format!("{:?}", on_effect);
-    assert_eq!(t, r#"Fade(FadeEffectNodeDefinition { lights: "@all", ticks: Variable("`ticks=10`"), target: "`target=s(255);rgb(255,255,255);w(255,255,255)`" })"#);
+    assert_eq!(t, r#"Fade(FadeEffectNodeDefinition { lights: "@all", ticks: Variable("`on_ticks=10`"), target: "`target=s(255);rgb(255,255,255);w(255,255,255)`", no_dimming: false })"#);
 
     let _ = array_manager.get_usage_effect_runtime(&defs::EffectUsage::On, "test", &None, None, DIMMING_AMOUNT_MAX).unwrap();
 
