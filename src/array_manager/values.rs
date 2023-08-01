@@ -1,11 +1,13 @@
+use std::sync::Arc;
+
 use super::error::DmxArrayError;
 use super::manager::ArrayManager;
 use super::Scope;
 
 impl ArrayManager {
-    pub(super) fn add_value(&mut self, value_name: &str, value: &str) -> Result<(), DmxArrayError> {
+    pub(super) fn add_value(&mut self, value_name: Arc<str>, value: &str) -> Result<(), DmxArrayError> {
         self.values
-            .insert(value_name.to_string(), value.to_string());
+            .insert(value_name, value.to_string());
         Ok(())
     }
 
@@ -73,7 +75,7 @@ impl ArrayManager {
             } else {
                 return Err(DmxArrayError::ValueExpressionNotTerminated(
                     scope.array_id.clone(),
-                    unexpanded_value.to_string(),
+                    Arc::from(unexpanded_value),
                 ));
             }
         }

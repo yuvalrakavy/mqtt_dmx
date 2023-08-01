@@ -142,7 +142,7 @@ mod test_artnet_manager {
         messages::{ToArtnetManagerMessage, ToMqttPublisherMessage},
     };
 
-    use std::{net::IpAddr, str::FromStr};
+    use std::{net::IpAddr, str::FromStr, sync::Arc};
     use tokio::sync::mpsc::Sender;
     use tokio_util::sync::CancellationToken;
 
@@ -249,7 +249,7 @@ mod test_artnet_manager {
 
         sender
             .send(ToArtnetManagerMessage::AddUniverse(
-                "test".to_string(),
+                Arc::from("test"),
                 universe_definition,
                 tx,
             ))
@@ -263,7 +263,7 @@ mod test_artnet_manager {
 
 #[cfg(test)]
 mod test_effect_nodes {
-    use std::{net::IpAddr, str::FromStr};
+    use std::{net::IpAddr, str::FromStr, sync::Arc};
 
     use crate::{
         array_manager::ArrayManager,
@@ -319,7 +319,7 @@ mod test_effect_nodes {
             .add_universe("0", get_universe_definition())
             .unwrap();
 
-        array_manager.add_array("test", Box::new(array)).unwrap();
+        array_manager.add_array(Arc::from("test"), Box::new(array)).unwrap();
         let node = array_manager
             .get_usage_effect_runtime(
                 &defs::EffectUsage::On,
@@ -446,7 +446,7 @@ mod test_effect_nodes {
             .add_universe("0", get_universe_definition())
             .unwrap();
 
-        array_manager.add_array("test", Box::new(array)).unwrap();
+        array_manager.add_array(Arc::from("test"), Box::new(array)).unwrap();
 
         let node = array_manager
             .get_usage_effect_runtime(

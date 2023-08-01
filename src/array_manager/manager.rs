@@ -1,5 +1,6 @@
 use log::info;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::{select, sync::mpsc::Receiver};
 use tokio_util::sync::CancellationToken;
 
@@ -9,9 +10,9 @@ use crate::messages::ToArrayManagerMessage;
 
 #[derive(Debug)]
 pub struct ArrayManager {
-    pub(super) arrays: HashMap<String, Box<DmxArray>>,
-    pub(super) effects: HashMap<String, EffectNodeDefinition>,
-    pub(super) values: HashMap<String, String>,
+    pub(super) arrays: HashMap<Arc<str>, Box<DmxArray>>,
+    pub(super) effects: HashMap<Arc<str>, EffectNodeDefinition>,
+    pub(super) values: HashMap<Arc<str>, String>,
     pub(super) default_on_effect: EffectNodeDefinition,
     pub(super) default_off_effect: EffectNodeDefinition,
     pub(super) default_dim_effect: EffectNodeDefinition,
@@ -60,23 +61,22 @@ impl ArrayManager {
 
     pub fn add_array(
         &mut self,
-        array_id: impl Into<String>,
+        array_id: Arc<str>,
         array: Box<DmxArray>,
     ) -> Result<(), DmxArrayError> {
-        let array_id = array_id.into();
         self.verify_array(&array_id, &array)?;
         self.arrays.insert(array_id, array);
         Ok(())
     }
 
-    pub fn remove_array(&mut self, name: String) -> Result<(), DmxArrayError> {
+    pub fn remove_array(&mut self, name: Arc<str>) -> Result<(), DmxArrayError> {
         self.arrays.remove(&name);
         Ok(())
     }
 
     pub(super) fn get_array(&self, array_id: &str) -> Result<&DmxArray, DmxArrayError> {
         match self.arrays.get(array_id) {
-            None => Err(DmxArrayError::ArrayNotFound(array_id.to_string())),
+            None => Err(DmxArrayError::ArrayNotFound(Arc::from(array_id))),
             Some(array) => Ok(array),
         }
     }
@@ -92,7 +92,7 @@ impl ArrayManager {
             }
 
             ToArrayManagerMessage::AddValue(value_name, value, reply_tx) => {
-                reply_tx.send(self.add_value(&value_name, &value)).unwrap()
+                reply_tx.send(self.add_value(value_name, &value)).unwrap()
             }
 
             ToArrayManagerMessage::RemoveValue(value_name, reply_tx) => {
@@ -100,7 +100,7 @@ impl ArrayManager {
             }
 
             ToArrayManagerMessage::AddEffect(effect_id, effect, reply_tx) => {
-                reply_tx.send(self.add_effect(&effect_id, effect)).unwrap()
+                reply_tx.send(self.add_effect(effect_id, effect)).unwrap()
             }
 
             ToArrayManagerMessage::RemoveEffect(effect_id, reply_tx) => {
@@ -118,7 +118,7 @@ impl ArrayManager {
                 .send(self.get_usage_effect_runtime(
                     &effect_usage,
                     &array_id,
-                    effect_id.as_deref(),
+                    effect_id.as_ref(),
                     values,
                     dimming_amount,
                 ))

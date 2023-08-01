@@ -3,6 +3,7 @@ use std::net::IpAddr;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::str::FromStr;
+use std::sync::Arc;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct UniverseDefinition {
@@ -23,7 +24,7 @@ pub struct UniverseDefinition {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct ValueDefinition {
-    pub value: String,
+    pub value: Arc<str>,
 }
 
 pub type DimmingAmount = usize;
@@ -36,27 +37,27 @@ pub struct DmxArray {
     pub universe_id: String,        // Default universe to use
     pub lights: HashMap<String, String>,
     #[serde(default="default_on_effect_id")]
-    pub on: String,
+    pub on: Arc<str>,
     #[serde(default="default_off_effect_id")]
-    pub off: String,
+    pub off: Arc<str>,
     #[serde(default="default_dim_effect_id")]
-    pub dim: String,
+    pub dim: Arc<str>,
     #[serde(default)]
     pub effects: HashMap<String, EffectNodeDefinition>,
     #[serde(default)]
     pub values: HashMap<String, String>,
 }
 
-fn default_on_effect_id() -> String {
-    "on".to_string()
+fn default_on_effect_id() -> Arc<str> {
+    Arc::from("on")
 }
 
-fn default_off_effect_id() -> String {
-    "off".to_string()
+fn default_off_effect_id() -> Arc<str> {
+    Arc::from("off")
 }
 
-fn default_dim_effect_id() -> String {
-    "dim".to_string()
+fn default_dim_effect_id() -> Arc<str> {
+    Arc::from("dim")
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -134,15 +135,15 @@ pub struct FadeEffectNodeDefinition {
 // or to: DMX/Command/Off
 #[derive(Deserialize, Debug)]
 pub struct OnOffCommandParameters {
-    pub array_id: String,
-    pub effect_id: Option<String>,
+    pub array_id: Arc<str>,
+    pub effect_id: Option<Arc<str>>,
     pub values: Option<HashMap<String, String>>,
     pub dimming_amount: Option<DimmingAmount>,
 }
 
 #[derive(Deserialize, Debug)]
 pub struct StopCommandParameters {
-    pub array_id: String,
+    pub array_id: Arc<str>,
 }
 
 #[derive(Deserialize, Debug)]

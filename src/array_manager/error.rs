@@ -1,11 +1,13 @@
 
+use std::sync::Arc;
+
 use thiserror::Error;
 use super::verify::ChannelUsage;
 
 #[derive(Debug, Error)]
 pub enum DmxArrayError {
     #[error("Array with id '{0}' not found")]
-    ArrayNotFound(String),
+    ArrayNotFound(Arc<str>),
 
     #[error("Array '{0}' Lights {1} does not contain definition for {2}")]
     ArrayLightsNotFound(String, String, String),
@@ -17,13 +19,13 @@ pub enum DmxArrayError {
     ArrayLightsInvalidChannelDefinition(String, String, String),
 
     #[error("Effect '{0}' not found in array '{1}' or in global effects list")]
-    EffectNotFound(String, String),
+    EffectNotFound(Arc<str>, Arc<str>),
 
     #[error("Array '{0}' '{1}' has no value for {2}")]
     ArrayValueNotFound(String, String, String),
 
     #[error("Array '{0}' '{1}' has unterminated `value` expression")]
-    ValueExpressionNotTerminated(String, String),
+    ValueExpressionNotTerminated(Arc<str>, Arc<str>),
 
     #[error("Array '{0}' in universe '{1}': channel {2} was defined as {3} and is redefined as {4} in group @{5}")]
     ArrayLightChannelUsageMismatch(String, String, u16, ChannelUsage, ChannelUsage, String),

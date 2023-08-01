@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use super::*;
 use crate::defs::{DmxArray, DIMMING_AMOUNT_MAX};
@@ -39,7 +40,7 @@ fn test_verify_array() {
     let mut array_manager = ArrayManager::new();
     let array = serde_json::from_str::<DmxArray>(array_json).unwrap();
 
-    array_manager.add_array("test", Box::new(array)).unwrap();
+    array_manager.add_array(Arc::from("test"), Box::new(array)).unwrap();
 
     let array_json = r#"
             {
@@ -82,7 +83,7 @@ fn test_verify_array() {
 
     let array = serde_json::from_str::<DmxArray>(array_json).unwrap();
 
-    array_manager.add_array("test2", Box::new(array)).unwrap();
+    array_manager.add_array(Arc::from("test2"), Box::new(array)).unwrap();
 
     let array_json = r#"
             {
@@ -119,7 +120,7 @@ fn test_verify_array() {
 
     let array = serde_json::from_str::<DmxArray>(array_json).unwrap();
 
-    if let Err(e) = array_manager.add_array("test3", Box::new(array)) {
+    if let Err(e) = array_manager.add_array(Arc::from("test3"), Box::new(array)) {
         let t = e.to_string();
         assert_eq!(
             t,
@@ -158,7 +159,7 @@ fn test_verify_array() {
 
     let array = serde_json::from_str::<DmxArray>(array_json).unwrap();
 
-    array_manager.add_array("test2", Box::new(array)).unwrap();
+    array_manager.add_array(Arc::from("test2"), Box::new(array)).unwrap();
 
     let array_json = r#"
             {
@@ -190,7 +191,7 @@ fn test_verify_array() {
 
     let array = serde_json::from_str::<DmxArray>(array_json).unwrap();
 
-    if let Err(e) = array_manager.add_array("test2", Box::new(array)) {
+    if let Err(e) = array_manager.add_array(Arc::from("test2"), Box::new(array)) {
         let t = e.to_string();
         assert_eq!(t, "Array 'test2' in universe '0': channel 40 is defined as light red component in group @outside but is not included in @all group");
     }
@@ -221,7 +222,7 @@ fn test_verify_array() {
 
     let array = serde_json::from_str::<DmxArray>(array_json).unwrap();
 
-    if let Err(e) = array_manager.add_array("test2", Box::new(array)) {
+    if let Err(e) = array_manager.add_array(Arc::from("test2"), Box::new(array)) {
         let t = e.to_string();
         assert_eq!(t, "Array 'test2' in universe '0': channel 1 was defined as light green component and is redefined as light red component in group @@all");
     }
@@ -256,7 +257,7 @@ fn test_verify_array() {
 
     let array = serde_json::from_str::<DmxArray>(array_json).unwrap();
 
-    if let Err(e) = array_manager.add_array("test2", Box::new(array)) {
+    if let Err(e) = array_manager.add_array(Arc::from("test2"), Box::new(array)) {
         let t = e.to_string();
         assert_eq!(t, "Array 'test2' Light '@all -> rgb:0,x:5' (x:5) is invalid channel definition (s:n, rgb:n or w:n)");
     }
@@ -293,7 +294,7 @@ fn test_verify_array() {
 
     let array = serde_json::from_str::<DmxArray>(array_json).unwrap();
 
-    if let Err(e) = array_manager.add_array("test2", Box::new(array)) {
+    if let Err(e) = array_manager.add_array(Arc::from("test2"), Box::new(array)) {
         let t = e.to_string();
         assert_eq!(t, "Array 'test2' Light '@all -> rgb:0,@loop -> rgb:3,@circle -> @loop -> rgb:3,@circle -> @loop' (@loop) contain circular reference to @circle");
     }
@@ -334,8 +335,8 @@ fn test_get_array_light_channels() {
             }"#;
 
     let array = serde_json::from_str::<DmxArray>(array_json).unwrap();
-    array_manager.add_array("test".to_string(), Box::new(array)).unwrap();
-    let scope = Scope::new(&array_manager, "test", None, None, DIMMING_AMOUNT_MAX).unwrap();
+    array_manager.add_array(Arc::from("test"), Box::new(array)).unwrap();
+    let scope = Scope::new(&array_manager, Arc::from("test"), None, None, DIMMING_AMOUNT_MAX).unwrap();
 
     let result = scope.get_light_channels("@all").unwrap();
     let u0 = if result[0].universe_id == "0" { 0 } else { 1 };
@@ -400,9 +401,9 @@ fn test_expand_values() {
             }"#;
 
     let array = serde_json::from_str::<DmxArray>(array_json).unwrap();
-    array_manager.add_array("test".to_string(), Box::new(array)).unwrap();
+    array_manager.add_array(Arc::from("test"), Box::new(array)).unwrap();
 
-    let scope = Scope::new(&array_manager, "test", None, None, DIMMING_AMOUNT_MAX).unwrap();
+    let scope = Scope::new(&array_manager, Arc::from("test"), None, None, DIMMING_AMOUNT_MAX).unwrap();
     let result = scope.expand_values("hello `test` world").unwrap();
     assert_eq!(result, "hello test-array-value world");
 
@@ -411,13 +412,13 @@ fn test_expand_values() {
         .unwrap();
     assert_eq!(result, "hello default world");
 
-    let scope = Scope::new(&&array_manager, "test", None, None, DIMMING_AMOUNT_MAX).unwrap();
+    let scope = Scope::new(&&array_manager, Arc::from("test"), None, None, DIMMING_AMOUNT_MAX).unwrap();
     let result = scope.expand_values("hello `test2` world").unwrap();
     assert_eq!(result, "hello test2-array-value world");
 
     let scope = Scope::new(
         &array_manager,
-        "test",
+        Arc::from("test"),
         None,
         Some(HashMap::from([(
             "test".to_string(),
@@ -467,7 +468,7 @@ fn test_effect_management() {
             }"#;
 
     let array = serde_json::from_str::<DmxArray>(array_json).unwrap();
-    array_manager.add_array("test".to_string(), Box::new(array)).unwrap();
+    array_manager.add_array(Arc::from("test"), Box::new(array)).unwrap();
 
     let on_effect = array_manager.get_usage_effect_definition(&defs::EffectUsage::On, "test", None).unwrap();
     let t = format!("{:?}", on_effect);
@@ -508,13 +509,13 @@ fn test_effect_management() {
             }"#;
 
     let array = serde_json::from_str::<DmxArray>(array_json).unwrap();
-    array_manager.add_array("test".to_string(), Box::new(array)).unwrap();
+    array_manager.add_array(Arc::from("test"), Box::new(array)).unwrap();
 
-    let d = array_manager.get_usage_effect_runtime(&defs::EffectUsage::On, "test", Some("simple_on"), None, DIMMING_AMOUNT_MAX).unwrap();
+    let d = array_manager.get_usage_effect_runtime(&defs::EffectUsage::On, "test", Some(&Arc::from("simple_on")), None, DIMMING_AMOUNT_MAX).unwrap();
     let t = format!("{:?}", d);
     println!("{}", t);
 
-    let d = array_manager.get_usage_effect_runtime(&defs::EffectUsage::On, "test", Some("simple_on"), None, 500).unwrap();
+    let d = array_manager.get_usage_effect_runtime(&defs::EffectUsage::On, "test", Some(&Arc::from("simple_on")), None, 500).unwrap();
     let t = format!("{:?}", d);
     println!("{}", t);
 

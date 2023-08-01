@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::defs::{self, DimmingAmount};
 use crate::defs::{EffectNodeDefinition, EffectUsage};
@@ -22,8 +23,8 @@ impl defs::EffectNodeDefinition {
 }
 
 impl ArrayManager {
-    pub(super) fn add_effect(&mut self, effect_id: &str, effect: EffectNodeDefinition) -> Result<(), DmxArrayError> {
-        self.effects.insert(effect_id.to_string(), effect);
+    pub(super) fn add_effect(&mut self, effect_id: Arc<str>, effect: EffectNodeDefinition) -> Result<(), DmxArrayError> {
+        self.effects.insert(effect_id, effect);
         Ok(())
     }
 
@@ -52,10 +53,10 @@ impl ArrayManager {
         &self,
         usage: &EffectUsage,
         array_id: &str,
-        effect_id: Option<&str>
-    ) -> Result<String, DmxArrayError> {
+        effect_id: Option<&Arc<str>>
+    ) -> Result<Arc<str>, DmxArrayError> {
         if let Some(effect_id) = effect_id {
-            Ok(effect_id.to_owned())
+            Ok(effect_id.clone())
         } else {
             let array = self.get_array(array_id)?;
 
@@ -71,7 +72,7 @@ impl ArrayManager {
         &self,
         usage: &EffectUsage,
         array_id: &str,
-        effect_id: Option<&str>,
+        effect_id: Option<&Arc<str>>,
     ) -> Result<&EffectNodeDefinition, DmxArrayError> {
         let effect_id = self.get_usage_effect_id(usage, array_id, effect_id)?;
         let array = self.get_array(array_id)?;
@@ -87,7 +88,7 @@ impl ArrayManager {
 
         effect_definition.ok_or_else(|| {
             DmxArrayError::EffectNotFound(
-                format!("{} ({})", array_id, array.description),
+                Arc::from(format!("{} ({})", array_id, array.description)),
                 effect_id.clone(),
             )
         })
@@ -97,12 +98,12 @@ impl ArrayManager {
         &self,
         usage: &EffectUsage,
         array_id: &str,
-        effect_id: Option<&str>,
+        effect_id: Option<&Arc<str>>,
         values: Option<HashMap<String, String>>,
         dimming_amount: DimmingAmount,
     ) -> Result<Box<dyn EffectNodeRuntime>, DmxArrayError> {
         let effect_definition = self.get_usage_effect_definition(usage, array_id, effect_id)?;
-        let scope = super::Scope::new(self, array_id, effect_id, values, dimming_amount)?;
+        let scope = super::Scope::new(self, Arc::from(array_id), effect_id, values, dimming_amount)?;
 
         effect_definition.get_runtime_node(&scope)
     }

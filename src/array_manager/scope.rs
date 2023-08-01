@@ -1,5 +1,6 @@
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use super::manager::ArrayManager;
 use super::DmxArrayError;
@@ -9,8 +10,8 @@ use crate::defs::DimmingAmount;
 #[derive(Debug)]
 pub struct Scope<'a> {
     array_manager: &'a ArrayManager,
-    pub array_id: String,
-    pub effect_id: Option<String>,
+    pub array_id: Arc<str>,
+    pub effect_id: Option<Arc<str>>,
     pub values: Option<HashMap<String, String>>,
     pub dimming_amount: DimmingAmount,
 }
@@ -30,8 +31,7 @@ impl std::fmt::Display for Scope<'_> {
 }
 
 impl Scope<'_> {
-    pub fn new<'a>(array_manager: &'a ArrayManager, array_id: impl Into<String>, effect_id: Option<&str>, values: Option<HashMap<String, String>>, dimming_amount: DimmingAmount) -> Result<Scope<'a>, DmxArrayError> {
-        let array_id = array_id.into();
+    pub fn new<'a>(array_manager: &'a ArrayManager, array_id: Arc<str>, effect_id: Option<&Arc<str>>, values: Option<HashMap<String, String>>, dimming_amount: DimmingAmount) -> Result<Scope<'a>, DmxArrayError> {
         let array = array_manager.arrays.get(&array_id);
 
         if array.is_none() {
@@ -41,7 +41,7 @@ impl Scope<'_> {
         Ok(Scope {
             array_manager,
             array_id,
-            effect_id: effect_id.map(|s| s.to_owned()),
+            effect_id: effect_id.cloned(),
             values,
             dimming_amount,
         })
