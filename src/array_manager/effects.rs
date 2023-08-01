@@ -52,10 +52,10 @@ impl ArrayManager {
         &self,
         usage: &EffectUsage,
         array_id: &str,
-        effect_id: &Option<String>
+        effect_id: Option<&str>
     ) -> Result<String, DmxArrayError> {
         if let Some(effect_id) = effect_id {
-            Ok(effect_id.clone())
+            Ok(effect_id.to_owned())
         } else {
             let array = self.get_array(array_id)?;
 
@@ -71,7 +71,7 @@ impl ArrayManager {
         &self,
         usage: &EffectUsage,
         array_id: &str,
-        effect_id: &Option<String>,
+        effect_id: Option<&str>,
     ) -> Result<&EffectNodeDefinition, DmxArrayError> {
         let effect_id = self.get_usage_effect_id(usage, array_id, effect_id)?;
         let array = self.get_array(array_id)?;
@@ -97,7 +97,7 @@ impl ArrayManager {
         &self,
         usage: &EffectUsage,
         array_id: &str,
-        effect_id: &Option<String>,
+        effect_id: Option<&str>,
         values: Option<HashMap<String, String>>,
         dimming_amount: DimmingAmount,
     ) -> Result<Box<dyn EffectNodeRuntime>, DmxArrayError> {

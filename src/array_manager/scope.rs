@@ -30,7 +30,7 @@ impl std::fmt::Display for Scope<'_> {
 }
 
 impl Scope<'_> {
-    pub fn new<'a>(array_manager: &'a ArrayManager, array_id: impl Into<String>, effect_id: &Option<String>, values: Option<HashMap<String, String>>, dimming_amount: DimmingAmount) -> Result<Scope<'a>, DmxArrayError> {
+    pub fn new<'a>(array_manager: &'a ArrayManager, array_id: impl Into<String>, effect_id: Option<&str>, values: Option<HashMap<String, String>>, dimming_amount: DimmingAmount) -> Result<Scope<'a>, DmxArrayError> {
         let array_id = array_id.into();
         let array = array_manager.arrays.get(&array_id);
 
@@ -41,7 +41,7 @@ impl Scope<'_> {
         Ok(Scope {
             array_manager,
             array_id,
-            effect_id: effect_id.clone(),
+            effect_id: effect_id.map(|s| s.to_owned()),
             values,
             dimming_amount,
         })

@@ -118,7 +118,7 @@ impl ArrayManager {
                 .send(self.get_usage_effect_runtime(
                     &effect_usage,
                     &array_id,
-                    &effect_id,
+                    effect_id.as_deref(),
                     values,
                     dimming_amount,
                 ))
