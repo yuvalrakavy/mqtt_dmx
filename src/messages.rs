@@ -1,9 +1,8 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::sync::oneshot::Sender;
 use crate::artnet_manager::EffectNodeRuntime;
-use crate::defs::{self, EffectUsage};
+use crate::defs::{self, EffectUsage, SymbolTable};
 use crate::{artnet_manager::ArtnetError, array_manager::DmxArrayError};
 
 #[derive(Debug)]
@@ -30,8 +29,9 @@ pub enum ToArrayManagerMessage {
     AddEffect(Arc<str>, defs::EffectNodeDefinition, Sender<Result<(), DmxArrayError>>),
     RemoveEffect(Arc<str>, Sender<Result<(), DmxArrayError>>),
 
-    GetEffectRuntime(Arc<str>, EffectUsage, Option<Arc<str>>, Option<HashMap<String, String>>, usize, Sender<Result<Box<dyn EffectNodeRuntime>, DmxArrayError>>),
+    GetEffectRuntime(Arc<str>, EffectUsage, Option<Arc<str>>, usize, Sender<Result<Box<dyn EffectNodeRuntime>, DmxArrayError>>),
 
-    AddValue(Arc<str>, Arc<str>, Sender<Result<(), DmxArrayError>>),
-    RemoveValue(Arc<str>, Sender<Result<(), DmxArrayError>>),
+    InitializeArrayValues(Arc<str>, SymbolTable, Sender<Result<(), DmxArrayError>>),
+    AddGlobalValue(Arc<str>, Arc<str>, Sender<Result<(), DmxArrayError>>),
+    RemoveGlobalValue(Arc<str>, Sender<Result<(), DmxArrayError>>),
 }

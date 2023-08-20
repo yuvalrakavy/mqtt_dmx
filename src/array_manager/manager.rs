@@ -5,14 +5,15 @@ use tokio::{select, sync::mpsc::Receiver};
 use tokio_util::sync::CancellationToken;
 
 use super::error::DmxArrayError;
-use crate::defs::{DmxArray, EffectNodeDefinition};
+use crate::defs::{DmxArray, EffectNodeDefinition, SymbolTable};
 use crate::messages::ToArrayManagerMessage;
 
 #[derive(Debug)]
 pub struct ArrayManager {
     pub(super) arrays: HashMap<Arc<str>, Box<DmxArray>>,
     pub(super) effects: HashMap<Arc<str>, EffectNodeDefinition>,
-    pub(super) values: HashMap<Arc<str>, String>,
+    pub(super) global_values: SymbolTable,
+    pub(super) values: HashMap<Arc<str>, SymbolTable>,
     pub(super) default_on_effect: EffectNodeDefinition,
     pub(super) default_off_effect: EffectNodeDefinition,
     pub(super) default_dim_effect: EffectNodeDefinition,
@@ -52,6 +53,7 @@ impl ArrayManager {
         Self {
             arrays: HashMap::new(),
             effects: HashMap::new(),
+            global_values: HashMap::new(),
             values: HashMap::new(),
             default_on_effect,
             default_off_effect,
@@ -91,12 +93,16 @@ impl ArrayManager {
                 reply_tx.send(self.remove_array(array_id)).unwrap()
             }
 
-            ToArrayManagerMessage::AddValue(value_name, value, reply_tx) => {
-                reply_tx.send(self.add_value(value_name, &value)).unwrap()
+            ToArrayManagerMessage::AddGlobalValue(value_name, value, reply_tx) => {
+                reply_tx.send(self.set_global_value(value_name, &value)).unwrap()
             }
 
-            ToArrayManagerMessage::RemoveValue(value_name, reply_tx) => {
-                reply_tx.send(self.remove_value(&value_name)).unwrap()
+            ToArrayManagerMessage::InitializeArrayValues(array_id, values, reply_tx) => {
+                reply_tx.send(self.initialize_array_values(array_id, values)).unwrap()
+            }
+
+            ToArrayManagerMessage::RemoveGlobalValue(value_name, reply_tx) => {
+                reply_tx.send(self.remove_global_value(&value_name)).unwrap()
             }
 
             ToArrayManagerMessage::AddEffect(effect_id, effect, reply_tx) => {
@@ -111,7 +117,6 @@ impl ArrayManager {
                 array_id,
                 effect_usage,
                 effect_id,
-                values,
                 dimming_amount,
                 reply_tx,
             ) => reply_tx
@@ -119,7 +124,6 @@ impl ArrayManager {
                     &effect_usage,
                     &array_id,
                     effect_id.as_ref(),
-                    values,
                     dimming_amount,
                 ))
                 .unwrap(),

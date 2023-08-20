@@ -1,5 +1,4 @@
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::manager::ArrayManager;
@@ -12,7 +11,6 @@ pub struct Scope<'a> {
     array_manager: &'a ArrayManager,
     pub array_id: Arc<str>,
     pub effect_id: Option<Arc<str>>,
-    pub values: Option<HashMap<String, String>>,
     pub dimming_amount: DimmingAmount,
 }
 
@@ -31,7 +29,7 @@ impl std::fmt::Display for Scope<'_> {
 }
 
 impl Scope<'_> {
-    pub fn new<'a>(array_manager: &'a ArrayManager, array_id: Arc<str>, effect_id: Option<&Arc<str>>, values: Option<HashMap<String, String>>, dimming_amount: DimmingAmount) -> Result<Scope<'a>, DmxArrayError> {
+    pub fn new<'a>(array_manager: &'a ArrayManager, array_id: Arc<str>, effect_id: Option<&Arc<str>>, dimming_amount: DimmingAmount) -> Result<Scope<'a>, DmxArrayError> {
         let array = array_manager.arrays.get(&array_id);
 
         if array.is_none() {
@@ -42,7 +40,6 @@ impl Scope<'_> {
             array_manager,
             array_id,
             effect_id: effect_id.cloned(),
-            values,
             dimming_amount,
         })
     }
@@ -52,6 +49,6 @@ impl Scope<'_> {
     }
 
     pub fn expand_values(&self, unexpanded_value: &str) -> Result<String, DmxArrayError> {
-        self.array_manager.expand_values(self, unexpanded_value)
+        self.array_manager.expand_values(self.array_id.clone(), unexpanded_value)
     }
 }

@@ -22,7 +22,7 @@ pub enum DmxArrayError {
     EffectNotFound(Arc<str>, Arc<str>),
 
     #[error("Array '{0}' '{1}' has no value for {2}")]
-    ArrayValueNotFound(String, String, String),
+    ArrayValueNotFound(Arc<str>, String, String),
 
     #[error("Array '{0}' '{1}' has unterminated `value` expression")]
     ValueExpressionNotTerminated(Arc<str>, Arc<str>),

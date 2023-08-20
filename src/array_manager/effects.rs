@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::defs::{self, DimmingAmount};
@@ -99,11 +98,10 @@ impl ArrayManager {
         usage: &EffectUsage,
         array_id: &str,
         effect_id: Option<&Arc<str>>,
-        values: Option<HashMap<String, String>>,
         dimming_amount: DimmingAmount,
     ) -> Result<Box<dyn EffectNodeRuntime>, DmxArrayError> {
         let effect_definition = self.get_usage_effect_definition(usage, array_id, effect_id)?;
-        let scope = super::Scope::new(self, Arc::from(array_id), effect_id, values, dimming_amount)?;
+        let scope = super::Scope::new(self, Arc::from(array_id), effect_id, dimming_amount)?;
 
         effect_definition.get_runtime_node(&scope)
     }

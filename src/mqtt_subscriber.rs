@@ -267,7 +267,7 @@ impl MqttSubscriber {
             let (tx, rx) = oneshot::channel::<Result<(), DmxArrayError>>();
 
             self.to_array_tx
-                .send(messages::ToArrayManagerMessage::RemoveValue(
+                .send(messages::ToArrayManagerMessage::RemoveGlobalValue(
                     value_name.to_owned(),
                     tx,
                 ))
@@ -283,7 +283,7 @@ impl MqttSubscriber {
                     let (tx, rx) = oneshot::channel::<Result<(), DmxArrayError>>();
 
                     self.to_array_tx
-                        .send(messages::ToArrayManagerMessage::AddValue(
+                        .send(messages::ToArrayManagerMessage::AddGlobalValue(
                             value_name,
                             value_definition.value,
                             tx,
@@ -378,6 +378,22 @@ impl MqttSubscriber {
                     )
                 })?;
 
+                // If values were provided, set them as the array values
+                if let Some(initial_values) = command_parameters.values {
+                    let (tx, rx) = oneshot::channel::<Result<(), DmxArrayError>>();
+
+                    self.to_array_tx
+                        .send(messages::ToArrayManagerMessage::InitializeArrayValues(
+                            command_parameters.array_id.clone(),
+                            initial_values,
+                            tx,
+                        ))
+                        .await
+                        .unwrap();
+
+                        let _ = rx.await.unwrap();
+                }
+
                 let (tx, rx) =
                     oneshot::channel::<Result<Box<dyn EffectNodeRuntime>, DmxArrayError>>();
 
@@ -389,7 +405,6 @@ impl MqttSubscriber {
                         command_parameters.array_id,
                         usage,
                         command_parameters.effect_id,
-                        command_parameters.values,
                         command_parameters
                             .dimming_amount
                             .unwrap_or(DIMMING_AMOUNT_MAX),

@@ -1,40 +1,71 @@
 use std::sync::Arc;
+use crate::defs::SymbolTable;
 
 use super::error::DmxArrayError;
 use super::manager::ArrayManager;
 use super::Scope;
 
 impl ArrayManager {
-    pub(super) fn add_value(&mut self, value_name: Arc<str>, value: &str) -> Result<(), DmxArrayError> {
-        self.values
-            .insert(value_name, value.to_string());
+    fn set_array_value(
+        &mut self,
+        array_id: Arc<str>,
+        value_name: Arc<str>,
+        value: &str,
+    ) -> Result<(), DmxArrayError> {
+        let array_values = self
+            .values
+            .entry(array_id)
+            .or_insert_with(SymbolTable::new);
+
+        array_values.insert(value_name, value.to_string());
         Ok(())
     }
 
-    pub(super) fn remove_value(&mut self, value_name: &str) -> Result<(), DmxArrayError> {
-        self.values.remove(value_name);
+    pub (super) fn initialize_array_values(
+        &mut self,
+        array_id: Arc<str>,
+        symbol_table: SymbolTable,
+    ) -> Result<(), DmxArrayError> {
+        for (value_name, value) in symbol_table {
+            self.set_array_value(array_id.clone(), value_name, &value)?;
+        }
         Ok(())
     }
 
-    fn get_value(&self, scope: &Scope, value_name: &str) -> Result<Option<String>, DmxArrayError> {
-        if let Some(values) = &scope.values {
-            if let Some(value) = values.get(value_name) {
+    pub(super) fn set_global_value(&mut self, value_name: Arc<str>, value: &str) -> Result<(), DmxArrayError> {
+        self.global_values.insert(value_name, value.to_string());
+        Ok(())
+    }
+
+    pub(super) fn remove_global_value(
+        &mut self,
+        value_name: &str,
+    ) -> Result<(), DmxArrayError> {
+        self.global_values.remove(value_name);
+        Ok(())
+    }
+
+    fn get_value(
+        &self,
+        array_id: Arc<str>,
+        value_name: &str,
+    ) -> Result<Option<String>, DmxArrayError> {
+        if !self.arrays.contains_key(&array_id) {
+            return Err(DmxArrayError::ArrayNotFound(array_id));
+        }
+
+        if let Some(array_values) = self.values.get(&array_id) {
+            if let Some(value) = array_values.get(value_name) {
                 return Ok(Some(value.to_string()));
             }
         }
 
-        let array = self.get_array(&scope.array_id)?;
-
-        if let Some(value) = array.values.get(value_name) {
-            return Ok(Some(value.to_string()));
-        }
-
-        Ok(self.values.get(value_name).map(|s| s.to_string()))
+        Ok(self.global_values.get(value_name).map(|s| s.to_string()))
     }
 
     pub(super) fn expand_values(
         &self,
-        scope: &Scope,
+        array_id: Arc<str>,
         unexpanded_value: &str,
     ) -> Result<String, DmxArrayError> {
         let mut value = unexpanded_value;
@@ -57,7 +88,7 @@ impl ArrayManager {
                         (value_name_expression, None)
                     };
 
-                let expanded_value = self.get_value(scope, value_name)?;
+                let expanded_value = self.get_value(array_id.clone(), value_name)?;
 
                 if let Some(expanded_value) = expanded_value {
                     result.push_str(&expanded_value);
@@ -65,7 +96,7 @@ impl ArrayManager {
                     result.push_str(default_value);
                 } else {
                     return Err(DmxArrayError::ArrayValueNotFound(
-                        scope.array_id.to_string(),
+                        array_id.clone(),
                         unexpanded_value.to_string(),
                         value_name.to_string(),
                     ));
@@ -74,7 +105,7 @@ impl ArrayManager {
                 value = &value[value_name_end_index + 1..];
             } else {
                 return Err(DmxArrayError::ValueExpressionNotTerminated(
-                    scope.array_id.clone(),
+                    array_id.clone(),
                     Arc::from(unexpanded_value),
                 ));
             }

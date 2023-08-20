@@ -325,7 +325,6 @@ mod test_effect_nodes {
                 &defs::EffectUsage::On,
                 "test",
                 None,
-                None,
                 defs::DIMMING_AMOUNT_MAX,
             )
             .unwrap();
@@ -362,7 +361,6 @@ mod test_effect_nodes {
             .get_usage_effect_runtime(
                 &defs::EffectUsage::Off,
                 "test",
-                None,
                 None,
                 defs::DIMMING_AMOUNT_MAX,
             )
@@ -453,7 +451,6 @@ mod test_effect_nodes {
                 &defs::EffectUsage::On,
                 "test",
                 None,
-                None,
                 800, // 80% dimming
             )
             .unwrap();
@@ -467,7 +464,6 @@ mod test_effect_nodes {
             .get_usage_effect_runtime(
                 &defs::EffectUsage::On,
                 "test",
-                None,
                 None,
                 defs::DIMMING_AMOUNT_MAX, // 100% dimming
             )
@@ -483,7 +479,6 @@ mod test_effect_nodes {
                 &defs::EffectUsage::On,
                 "test",
                 None,
-                None,
                 100, // 10% dimming
             )
             .unwrap();
@@ -497,7 +492,6 @@ mod test_effect_nodes {
             .get_usage_effect_runtime(
                 &defs::EffectUsage::On,
                 "test",
-                None,
                 None,
                 0, // 0% dimming
             )

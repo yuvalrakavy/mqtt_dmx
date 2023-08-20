@@ -30,6 +30,8 @@ pub struct ValueDefinition {
 pub type DimmingAmount = usize;
 pub const DIMMING_AMOUNT_MAX: DimmingAmount = 1000;
 
+pub type SymbolTable = HashMap<Arc<str>, String>;
+
 #[derive(Debug, Deserialize)]
 pub struct DmxArray {
     pub description: String,
@@ -45,7 +47,7 @@ pub struct DmxArray {
     #[serde(default)]
     pub effects: HashMap<String, EffectNodeDefinition>,
     #[serde(default)]
-    pub values: HashMap<String, String>,
+    pub default_values: SymbolTable,
 }
 
 fn default_on_effect_id() -> Arc<str> {
@@ -137,8 +139,8 @@ pub struct FadeEffectNodeDefinition {
 pub struct OnOffCommandParameters {
     pub array_id: Arc<str>,
     pub effect_id: Option<Arc<str>>,
-    pub values: Option<HashMap<String, String>>,
     pub dimming_amount: Option<DimmingAmount>,
+    pub values: Option<SymbolTable>,
 }
 
 #[derive(Deserialize, Debug)]
