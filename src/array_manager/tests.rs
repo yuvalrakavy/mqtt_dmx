@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::*;
@@ -410,11 +411,11 @@ fn test_expand_values() {
     //     "test2": "test2-array-value",
     //     "ticks": "20"
     // }
-    let values: SymbolTable = [
+    let values: SymbolTable = HashMap::from([
         (Arc::from("test"), "test-local-value".to_string()),
         (Arc::from("test2"), "test2-local-value".to_string()),
         (Arc::from("ticks"), "20".to_string()),
-    ].iter().cloned().collect();
+    ]);
 
     array_manager.initialize_array_values(array_id.clone(), values).unwrap();
 
