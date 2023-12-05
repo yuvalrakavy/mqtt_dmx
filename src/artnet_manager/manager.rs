@@ -1,4 +1,5 @@
 use log::info;
+use error_stack::{Result, ResultExt};
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -157,7 +158,7 @@ impl ArtnetManager {
                 }
                 u.set_channel(v)
             }
-            None => Err(ArtnetError::InvalidUniverse(universe_id.to_string())),
+            None => Err(ArtnetError::InvalidUniverse(universe_id.to_string()).into()),
         }
     }
 
@@ -168,7 +169,7 @@ impl ArtnetManager {
     ) -> Result<ChannelValue, ArtnetError> {
         match self.universes.get(universe_id) {
             Some(u) => u.get_channel(channel_definition),
-            None => Err(ArtnetError::InvalidUniverse(universe_id.to_string())),
+            None => Err(ArtnetError::InvalidUniverse(universe_id.to_string()).into()),
         }
     }
 
@@ -193,11 +194,12 @@ impl ArtnetManager {
         &mut self,
         parameters: &defs::SetChannelsParameters,
     ) -> Result<(), ArtnetError> {
+        let into_context = || ArtnetError::Context(format!("Setting channels {:?}", parameters));
         let mut target = parameters.target.parse::<TargetValue>()?;
         let channels = parameters
             .channels
             .split(',')
-            .map(|c| c.parse::<ChannelDefinition>())
+            .map(|c| c.parse::<ChannelDefinition>().change_context_lazy(into_context))
             .collect::<Result<Vec<ChannelDefinition>, _>>()?;
 
         if let Some(dimming_amount) = parameters.dimming_amount {
@@ -217,7 +219,7 @@ impl ArtnetManager {
                 return Err(ArtnetError::MissingTargetValue(
                     channel_definition.to_string(),
                     parameters.target.to_string(),
-                ));
+                ).into());
             }
         }
 
@@ -282,14 +284,16 @@ impl ArtnetManager {
 
 impl ArtnetController {
     pub fn new(controller: &IpAddr) -> Result<ArtnetController, ArtnetError> {
-        let socket = UdpSocket::bind("0.0.0.0:0")?;
-        socket.connect((*controller, DMX_UDP_PORT))?;
+        let into_context = || ArtnetError::Context(format!("Creating artnet controller at {}", controller));
+
+        let socket = UdpSocket::bind("0.0.0.0:0").change_context_lazy(into_context)?;
+        socket.connect((*controller, DMX_UDP_PORT)).change_context_lazy(into_context)?;
 
         Ok(ArtnetController { socket })
     }
 
     pub fn send(&self, packet_bytes: &[u8]) -> Result<(), ArtnetError> {
-        self.socket.send(packet_bytes)?;
+        self.socket.send(packet_bytes).change_context_lazy(|| ArtnetError::Context(String::from("Sending Artnet packet")))?;
         Ok(())
     }
 }
@@ -300,17 +304,19 @@ impl Universe {
         universe_id: &str,
         definition: UniverseDefinition,
     ) -> Result<Universe, ArtnetError> {
+        let into_context = || ArtnetError::Context(format!("Creating universe {}", universe_id));
+
         if definition.universe > 15 {
-            return Err(ArtnetError::InvalidUniverseNumber(definition.universe));
+            return Err(ArtnetError::InvalidUniverseNumber(definition.universe)).change_context_lazy(into_context);
         }
         if definition.subnet > 15 {
-            return Err(ArtnetError::InvalidSubnet(definition.subnet));
+            return Err(ArtnetError::InvalidSubnet(definition.subnet)).change_context_lazy(into_context);
         }
         if definition.net > 127 {
-            return Err(ArtnetError::InvalidNet(definition.net));
+            return Err(ArtnetError::InvalidNet(definition.net)).change_context_lazy(into_context);
         }
         if definition.channels > 512 {
-            return Err(ArtnetError::TooManyChannels(definition.channels));
+            return Err(ArtnetError::TooManyChannels(definition.channels)).change_context_lazy(into_context);
         }
 
         let channel_count = (definition.channels + 1) as usize & !1; // Round up to even number of channels
@@ -357,7 +363,7 @@ impl Universe {
                 self.description.clone(),
                 channel,
                 self.get_channel_count(),
-            ))
+            ).into())
         } else {
             Ok(())
         }

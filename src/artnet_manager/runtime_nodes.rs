@@ -1,3 +1,4 @@
+use error_stack::Result;
 use super::manager::{ArtnetManager, EffectNodeRuntime};
 use super::ArtnetError;
 use crate::array_manager::{error::DmxArrayError, Scope};

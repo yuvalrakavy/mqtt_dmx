@@ -24,8 +24,8 @@ pub enum ArtnetError {
     #[error("Invalid channel address: '{0}")]
     InvalidChannelAddress(String),
 
-    #[error("Connection error")]
-    ConnectionError(#[from] std::io::Error),
+    #[error("When: '{0}'")]
+    Context(String),
 
     #[error("Invalid dimmer value: '{0}'")]
     InvalidDimmerValue(String),

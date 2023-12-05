@@ -1,5 +1,6 @@
 
 use std::sync::Arc;
+use error_stack::Result;
 
 use super::manager::ArrayManager;
 use super::DmxArrayError;
@@ -33,7 +34,7 @@ impl Scope<'_> {
         let array = array_manager.arrays.get(&array_id);
 
         if array.is_none() {
-            return Err(DmxArrayError::ArrayNotFound(array_id));
+            return Err(DmxArrayError::ArrayNotFound(array_id).into());
         }
 
         Ok(Scope {

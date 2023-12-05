@@ -33,8 +33,8 @@ impl FromStr for ChannelDefinition {
     /// s:n -> ChannelDefinition { channel: n, channel_type: ChannelType::Single }
     /// rgb:n -> ChannelDefinition { channel: n, channel_type: ChannelType::RGB }
     /// w:n -> ChannelDefinition { channel: n, channel_type: ChannelType::TriWhite }
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        fn is_diff(c1: u16, c2: u16, c3: u16) -> Result<(), ArtnetError> {
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        fn is_diff(c1: u16, c2: u16, c3: u16) -> std::result::Result<(), ArtnetError> {
             if c1 == c2 || c1 == c3 || c2 == c3 {
                 return Err(ArtnetError::InvalidChannelAddress(format!(
                     "rgb or w individual channel addresses must be different: {}, {}, {}",
@@ -57,7 +57,7 @@ impl FromStr for ChannelDefinition {
                     .parse::<u16>()
                     .map_err(|_| ArtnetError::InvalidChannelAddress(s.to_string()))
             })
-            .collect::<Result<Vec<u16>, ArtnetError>>()?;
+            .collect::<std::result::Result<Vec<u16>, ArtnetError>>()?;
 
         if channels.is_empty() {
             return Err(ArtnetError::InvalidChannelAddress(s.to_string()));
@@ -128,7 +128,7 @@ impl FromStr for DimmerValue {
     /// rgb(r,g,b) -> DimmerValue::Rgb(r,g,b)
     /// w(w1, w2, w3) -> DimmerValue::TriWhite(w1, w2, w3)
     ///
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         let open_parenthesis = s
             .find('(')
             .ok_or_else(|| ArtnetError::InvalidDimmerValue(s.to_string()))?;
@@ -139,7 +139,7 @@ impl FromStr for DimmerValue {
         let values = s[open_parenthesis + 1..close_parenthesis]
             .split(',')
             .map(|v| v.trim().parse::<u8>())
-            .collect::<Result<Vec<u8>, _>>()
+            .collect::<std::result::Result<Vec<u8>, _>>()
             .map_err(|_| ArtnetError::InvalidDimmerValue(s.to_string()))?;
 
         match value_type.to_lowercase().as_str() {
@@ -203,11 +203,11 @@ impl FromStr for TargetValue {
     /// string syntax:
     ///  [s(n)];[rgb(r,g,b)];[w(w1,w2,w3)]
     ///
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         let values = s
             .split(';')
             .map(|v| v.trim().parse::<DimmerValue>())
-            .collect::<Result<Vec<DimmerValue>, _>>()?;
+            .collect::<std::result::Result<Vec<DimmerValue>, _>>()?;
 
         let mut target_value = TargetValue::default();
         for value in values {

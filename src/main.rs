@@ -19,7 +19,16 @@ async fn main() {
         param mqtt:String, desc: "MQTT broker to connect";
     }.parse_or_exit();
 
-    env_logger::init();
+    let d = tracing_init::TracingInit::builder("mqtt_ac")
+        .log_to_file(true)
+        .log_to_server(true)
+        .log_file_prefix("ac")
+        .log_file_path("logs")
+        .init().map(|t| format!("{t}")).unwrap();
+
+    println!("Logging: {}", d);
+
+    error_stack::Report::set_color_mode(error_stack::fmt::ColorMode::None);
 
     let config = ServiceConfig {
         mqtt_broker_address: args.mqtt,
@@ -31,4 +40,13 @@ async fn main() {
 
     tokio::signal::ctrl_c().await.unwrap();
     let _ = service.stop().await;
+}
+
+pub fn get_version() -> String {
+    format!("mqtt_dmx: {} (built at {})", built_info::PKG_VERSION, built_info::BUILT_TIME_UTC)
+}
+
+// Include the generated-file as a separate module
+pub mod built_info {
+    include!(concat!(env!("OUT_DIR"), "/built.rs"));
 }

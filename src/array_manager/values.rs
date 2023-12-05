@@ -1,4 +1,6 @@
 use std::sync::Arc;
+use error_stack::Result;
+
 use crate::defs::SymbolTable;
 
 use super::error::DmxArrayError;
@@ -15,7 +17,7 @@ impl ArrayManager {
         let array_values = self
             .values
             .entry(array_id)
-            .or_insert_with(SymbolTable::new);
+            .or_default();
 
         array_values.insert(value_name, value.to_string());
         Ok(())
@@ -51,7 +53,7 @@ impl ArrayManager {
         value_name: &str,
     ) -> Result<Option<String>, DmxArrayError> {
         if !self.arrays.contains_key(&array_id) {
-            return Err(DmxArrayError::ArrayNotFound(array_id));
+            return Err(DmxArrayError::ArrayNotFound(array_id).into());
         }
 
         if let Some(array_values) = self.values.get(&array_id) {
@@ -99,7 +101,7 @@ impl ArrayManager {
                         array_id.clone(),
                         unexpanded_value.to_string(),
                         value_name.to_string(),
-                    ));
+                    ).into());
                 }
 
                 value = &value[value_name_end_index + 1..];
@@ -107,7 +109,7 @@ impl ArrayManager {
                 return Err(DmxArrayError::ValueExpressionNotTerminated(
                     array_id.clone(),
                     Arc::from(unexpanded_value),
-                ));
+                ).into());
             }
         }
 
@@ -128,7 +130,7 @@ impl crate::defs::NumberOrVariable {
             crate::defs::NumberOrVariable::Variable(s) => {
                 let value = scope.expand_values(s)?;
                 value.parse().map_err(|e: std::num::ParseIntError| {
-                    DmxArrayError::ValueError(scope.to_string(), description, e.to_string())
+                    DmxArrayError::ValueError(scope.to_string(), description, e.to_string()).into()
                 })
             }
         }

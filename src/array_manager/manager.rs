@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::{select, sync::mpsc::Receiver};
 use tokio_util::sync::CancellationToken;
+use error_stack::Result;
 
 use super::error::DmxArrayError;
 use crate::defs::{DmxArray, EffectNodeDefinition, SymbolTable};
@@ -78,7 +79,7 @@ impl ArrayManager {
 
     pub(super) fn get_array(&self, array_id: &str) -> Result<&DmxArray, DmxArrayError> {
         match self.arrays.get(array_id) {
-            None => Err(DmxArrayError::ArrayNotFound(Arc::from(array_id))),
+            None => Err(DmxArrayError::ArrayNotFound(Arc::from(array_id)).into()),
             Some(array) => Ok(array),
         }
     }

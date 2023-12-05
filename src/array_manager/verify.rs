@@ -1,4 +1,5 @@
 
+use error_stack::Result;
 use std::collections::HashMap;
 use std::fmt::Display;
 
@@ -47,7 +48,7 @@ impl ArrayManager {
             for universe_channel_definition in lights.iter() {
                 let universe_usage = channel_usage
                     .entry(universe_channel_definition.universe_id.clone())
-                    .or_insert_with(HashMap::new);
+                    .or_default();
                 let mut add_channel_usage =
                     |channel: u16, usage: ChannelUsage| -> Result<(), DmxArrayError> {
                         if let Some(existing_usage) = universe_usage.get(&channel) {
@@ -59,7 +60,7 @@ impl ArrayManager {
                                     *existing_usage,
                                     usage,
                                     group_name.to_string(),
-                                ));
+                                ).into());
                             }
                         } else if must_exist {
                             return Err(DmxArrayError::ArrayLightChannelNotInAllGroup(
@@ -68,7 +69,7 @@ impl ArrayManager {
                                 channel,
                                 usage,
                                 group_name.to_string(),
-                            ));
+                            ).into());
                         } else {
                             universe_usage.insert(channel, usage);
                         }

@@ -1,6 +1,7 @@
 
 use std::collections::HashMap;
 use std::fmt::Display;
+use error_stack::Result;
 
 use super::manager::ArrayManager;
 use super::error::DmxArrayError;
@@ -102,7 +103,7 @@ impl ArrayManager {
 
                 if stack.len() > 5 {
                     // Array '{0}' Light '{1}' ({2}) contain circular reference to {3}
-                    return Err(DmxArrayError::ArrayLightsCircularReference(array_id.to_string(), stack.to_string(), nested_lights_list.to_string(), entry.to_string()));
+                    return Err(DmxArrayError::ArrayLightsCircularReference(array_id.to_string(), stack.to_string(), nested_lights_list.to_string(), entry.to_string()).into());
                 }
 
                 Self::static_do_get_array_light_channels(array_id, array, nested_lights_list, result, stack)?;

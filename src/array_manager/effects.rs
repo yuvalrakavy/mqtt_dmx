@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use error_stack::Result;
 
 use crate::defs::{self, DimmingAmount};
 use crate::defs::{EffectNodeDefinition, EffectUsage};
@@ -89,7 +90,7 @@ impl ArrayManager {
             DmxArrayError::EffectNotFound(
                 Arc::from(format!("{} ({})", array_id, array.description)),
                 effect_id.clone(),
-            )
+            ).into()
         })
     }
 
