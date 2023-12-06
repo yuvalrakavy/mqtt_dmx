@@ -39,6 +39,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4668cab20f66d8d020e1fbc0ebe47217433c1b6c8f2040faf858554e394ace6"
 
 [[package]]
+name = "async-channel"
+version = "2.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ca33f4bc4ed1babef42cad36cc1f51fa88be00420404e5b1e80ab1b18f7678c"
+dependencies = [
+ "concurrent-queue",
+ "event-listener",
+ "event-listener-strategy",
+ "futures-core",
+ "pin-project-lite",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -115,6 +128,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "concurrent-queue"
+version = "2.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d16048cd947b08fa32c24458a22f5dc5e835264f689f4f5653210c69fd107363"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "core-foundation-sys"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -153,6 +175,27 @@ checksum = "27a72baa257b5e0e2de241967bc5ee8f855d6072351042688621081d66b2a76b"
 dependencies = [
  "anyhow",
  "rustc_version",
+]
+
+[[package]]
+name = "event-listener"
+version = "4.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "770d968249b5d99410d61f5bf89057f3199a077a04d087092f58e7d10692baae"
+dependencies = [
+ "concurrent-queue",
+ "parking",
+ "pin-project-lite",
+]
+
+[[package]]
+name = "event-listener-strategy"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "958e4d70b6d5e81971bebec42271ec641e7ff4e170a6fa605f2b8a8b65cb97d3"
+dependencies = [
+ "event-listener",
+ "pin-project-lite",
 ]
 
 [[package]]
@@ -356,6 +399,7 @@ dependencies = [
 name = "mqtt_dmx"
 version = "0.1.0"
 dependencies = [
+ "async-channel",
  "built",
  "bytes",
  "chrono",
@@ -421,6 +465,12 @@ name = "overload"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b15813163c1d831bf4a13c3610c05c0d03b39feb07f7e09fa234dac9b15aaf39"
+
+[[package]]
+name = "parking"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb813b8af86854136c6922af0598d719255ecb2179515e6e7730d468f05c9cae"
 
 [[package]]
 name = "parking_lot"

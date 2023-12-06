@@ -9,6 +9,7 @@ mod array_manager;
 //mod effects_manager;
 mod messages;
 
+use log::info;
 use rustop::opts;
 use service::ServiceConfig;
 
@@ -19,14 +20,16 @@ async fn main() {
         param mqtt:String, desc: "MQTT broker to connect";
     }.parse_or_exit();
 
-    let d = tracing_init::TracingInit::builder("mqtt_ac")
+    let d = tracing_init::TracingInit::builder("mqtt_dmx")
         .log_to_file(true)
         .log_to_server(true)
-        .log_file_prefix("ac")
+        .log_file_prefix("dmx")
         .log_file_path("logs")
         .init().map(|t| format!("{t}")).unwrap();
 
     println!("Logging: {}", d);
+    info!("Starting {}", get_version());
+    info!("Logging: {}", d);
 
     error_stack::Report::set_color_mode(error_stack::fmt::ColorMode::None);
 

@@ -1,4 +1,4 @@
-use log::info;
+use log::{info, debug, trace};
 use error_stack::{Result, ResultExt};
 use std::{
     collections::HashMap,
@@ -139,7 +139,7 @@ impl ArtnetManager {
         }
 
         for id in completed_effect {
-            info!("Effect {} completed", id);
+            trace!("Effect {} completed", id);
             active_effects.remove(&id);
         }
 
@@ -148,7 +148,7 @@ impl ArtnetManager {
     }
 
     pub fn set_channel(&mut self, universe_id: &str, v: &ChannelValue) -> Result<(), ArtnetError> {
-        info!("Setting channel {} to {:?}", v.channel, v.value);
+        trace!("Setting channel {} to {:?}", v.channel, v.value);
 
         match self.universes.get_mut(universe_id) {
             Some(u) => {
@@ -183,7 +183,7 @@ impl ArtnetManager {
             }
 
             if universe.modified {
-                info!("Sending packet to {}", universe_id);
+                debug!("Sending packet to {}", universe_id);
                 universe.send()?;
             }
         }
@@ -252,7 +252,7 @@ impl ArtnetManager {
         &mut self,
         cancel: CancellationToken,
         mut receiver: Receiver<ToArtnetManagerMessage>,
-        to_mqtt_publisher: tokio::sync::mpsc::Sender<ToMqttPublisherMessage>,
+        to_mqtt_publisher: async_channel::Sender<ToMqttPublisherMessage>,
     ) {
         // Set tick timer
         let mut tick_timer = interval(TICK_DURATION);

@@ -1,8 +1,10 @@
-use tokio::sync::mpsc::Receiver;
+use error_stack::{ResultExt, Result};
+use async_channel::Receiver;
+use rumqttc::AsyncClient;
 use serde::Serialize;
 use log::{error, info};
 
-use crate::messages::ToMqttPublisherMessage;
+use crate::{messages::ToMqttPublisherMessage, service::MqttError};
 
 #[derive(Serialize, Debug)]
 struct MqttErrorMessageBody {
@@ -10,11 +12,12 @@ struct MqttErrorMessageBody {
     message: String,
 }
 
-pub async fn run(mqtt_client: rumqttc::AsyncClient, mut to_mqtt_publisher_rx: Receiver<ToMqttPublisherMessage>) {
-    info!("Starting MQTT publisher worker");
+pub async fn session(mqtt_client: AsyncClient, to_mqtt_publisher_rx: Receiver<ToMqttPublisherMessage>) -> Result<(), MqttError> {
+    info!("Starting MQTT publisher session");
+    let into_context = || MqttError::Context("In MQTT publisher session".to_string());
 
-    while let Some(message) = to_mqtt_publisher_rx.recv().await {
-        match message {
+    loop {
+        match to_mqtt_publisher_rx.recv().await.change_context_lazy(into_context)? {
             ToMqttPublisherMessage::Error(error) => {
                 let error_message_body = MqttErrorMessageBody {
                     time: chrono::Utc::now().to_rfc3339(),
@@ -23,15 +26,13 @@ pub async fn run(mqtt_client: rumqttc::AsyncClient, mut to_mqtt_publisher_rx: Re
 
                 error!("Error: {:?}", error_message_body);
 
-                let error_message_body = serde_json::to_vec(&error_message_body).unwrap();
+                let error_message_body = serde_json::to_vec(&error_message_body).change_context_lazy(into_context)?;
 
-                mqtt_client.publish("DMX/LastError", rumqttc::QoS::AtLeastOnce, true, error_message_body.clone()).await.unwrap();
-                mqtt_client.publish("DMX/Error", rumqttc::QoS::AtLeastOnce, false, error_message_body).await.unwrap();
+                mqtt_client.publish("DMX/LastError", rumqttc::QoS::AtLeastOnce, true, error_message_body.clone()).await.change_context_lazy(into_context)?;
+                mqtt_client.publish("DMX/Error", rumqttc::QoS::AtLeastOnce, false, error_message_body).await.change_context_lazy(into_context)?;
             }
         }
     }
-
-    info!("Stopping MQTT publisher worker");
 }
 
 #[cfg(test)]
@@ -49,7 +50,7 @@ mod test {
         let (to_mqtt_publisher_tx, to_mqtt_publisher_rx) = tokio::sync::mpsc::channel::<ToMqttPublisherMessage>(10);
 
         let _ = tokio::spawn(async move {
-            run(mqtt_client, to_mqtt_publisher_rx).await;
+            session(mqtt_client, to_mqtt_publisher_rx).await;
         });
 
         to_mqtt_publisher_tx.send(ToMqttPublisherMessage::Error("Test error".to_string())).await.unwrap();
