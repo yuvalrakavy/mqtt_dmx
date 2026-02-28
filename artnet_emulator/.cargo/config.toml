@@ -1,0 +1,4 @@
+# Override the repo-level cross-compilation target.
+# The emulator runs on the development machine, not on ARM.
+[build]
+target = "aarch64-apple-darwin"

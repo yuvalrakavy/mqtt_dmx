@@ -1,0 +1,20 @@
+[application]
+name = "artnet_emulator"
+default_platform = "fullstack"
+out_dir = "dist"
+asset_dir = "assets"
+
+[web.app]
+title = "ArtNet DMX Emulator"
+
+[web.watcher]
+reload_html = true
+watch_path = ["src", "assets"]
+
+[web.resource.dev]
+style = ["/main.css"]
+script = []
+
+[web.resource.release]
+style = ["/main.css"]
+script = []
