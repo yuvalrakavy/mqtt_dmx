@@ -208,6 +208,89 @@ impl Service<Stopped> {
             error!("Failed to create storage directory: {}", e);
         }
 
+        // Clone channel senders for replaying persisted state
+        let to_artnet_tx_replay = to_artnet_tx.clone();
+        let to_array_tx_replay = to_array_tx.clone();
+
+        // Load persisted state and replay through channels
+        let persisted_universes = persistence.load_universes();
+        let persisted_arrays = persistence.load_arrays();
+        let persisted_effects = persistence.load_effects();
+        let persisted_values = persistence.load_values();
+
+        for (universe_id, definition) in persisted_universes {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            if to_artnet_tx_replay
+                .send(ToArtnetManagerMessage::AddUniverse(
+                    universe_id.clone(),
+                    definition,
+                    tx,
+                ))
+                .await
+                .is_ok()
+            {
+                if let Ok(Err(e)) = rx.await {
+                    error!("Failed to restore universe {}: {:?}", universe_id, e);
+                }
+            }
+        }
+
+        for (array_id, definition) in persisted_arrays {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            if to_array_tx_replay
+                .send(messages::ToArrayManagerMessage::AddArray(
+                    array_id.clone(),
+                    Box::new(definition),
+                    tx,
+                ))
+                .await
+                .is_ok()
+            {
+                if let Ok(Err(e)) = rx.await {
+                    error!("Failed to restore array {}: {:?}", array_id, e);
+                }
+            }
+        }
+
+        for (effect_id, definition) in persisted_effects {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            if to_array_tx_replay
+                .send(messages::ToArrayManagerMessage::AddEffect(
+                    effect_id.clone(),
+                    definition,
+                    tx,
+                ))
+                .await
+                .is_ok()
+            {
+                if let Ok(Err(e)) = rx.await {
+                    error!("Failed to restore effect {}: {:?}", effect_id, e);
+                }
+            }
+        }
+
+        for (value_name, value) in persisted_values {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            if to_array_tx_replay
+                .send(messages::ToArrayManagerMessage::AddGlobalValue(
+                    value_name.clone(),
+                    Arc::from(value.as_str()),
+                    tx,
+                ))
+                .await
+                .is_ok()
+            {
+                if let Ok(Err(e)) = rx.await {
+                    error!("Failed to restore value {}: {:?}", value_name, e);
+                }
+            }
+        }
+
+        info!(
+            "Persisted configuration loaded from {}",
+            self.config.storage_path.display()
+        );
+
         let broker_address = self.config.mqtt_broker_address.clone();
 
         self.workers.spawn(async move {
