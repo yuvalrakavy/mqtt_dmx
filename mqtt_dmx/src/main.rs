@@ -10,6 +10,8 @@ mod array_manager;
 mod messages;
 mod persistence;
 
+use std::path::PathBuf;
+
 use log::info;
 use rustop::opts;
 use service::ServiceConfig;
@@ -19,7 +21,15 @@ async fn main() {
     let (args, _) = opts! {
         synopsis "MQTT DMX Controller";
         param mqtt:String, desc: "MQTT broker to connect";
+        opt storage:Option<String>, desc: "Path to config storage directory";
     }.parse_or_exit();
+
+    // Resolve storage path: CLI > env var > default
+    let storage_path = PathBuf::from(
+        args.storage
+            .or_else(|| std::env::var("MQTT_DMX_STORAGE_PATH").ok())
+            .unwrap_or_else(|| "dmx_config".to_string()),
+    );
 
     let d = tracing_init::TracingInit::builder("mqtt_dmx")
         .log_to_file(true)
@@ -36,6 +46,7 @@ async fn main() {
 
     let config = ServiceConfig {
         mqtt_broker_address: args.mqtt,
+        storage_path,
     };
 
     let service = service::Service::new(config);

@@ -1,7 +1,7 @@
 use error_stack::{Report, ResultExt};
 use log::info;
 use rumqttc::{AsyncClient, EventLoop, LastWill, MqttOptions, QoS};
-use std::{marker::PhantomData, sync::Arc};
+use std::{marker::PhantomData, path::PathBuf, sync::Arc};
 use thiserror::Error;
 use tokio::sync::mpsc::Sender;
 use tokio::{task::JoinSet, time::Duration};
@@ -20,6 +20,7 @@ pub struct Stopped {}
 
 pub struct ServiceConfig {
     pub mqtt_broker_address: String,
+    pub storage_path: PathBuf,
 }
 
 pub struct Service<Status = Stopped> {
