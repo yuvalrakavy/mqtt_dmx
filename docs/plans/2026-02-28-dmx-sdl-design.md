@@ -12,6 +12,7 @@ An SDL module (`dmx.sdl`) for the Store server that provides full configuration 
 - **Effects as SDL object tree** — Fade, Delay, Sequence, Parallel modeled as containable classes
 - **Channel strings, not objects** — LightGroups use mqtt_dmx's native channel syntax (`rgb:1`, `s:7`, `@group`, `$universe`)
 - **Explicit publish/unpublish** — all config objects require manual publish via trigger properties
+- **Description-based status** — publish status is shown as a suffix on the Description property (e.g. `" - (modified)"`, `" - (unpublished)"`) rather than a separate Status property. Suffix is stripped on publish.
 - **Status feedback** — subscribes to `DMX/Active` and `DMX/Error` for service health
 
 ## Object Hierarchy
@@ -19,18 +20,18 @@ An SDL module (`dmx.sdl`) for the Store server that provides full configuration 
 ```
 DMX (DeviceObject, UsingMqtt, MqttSubscriber)
   ├─ Universes (container)
-  │    └─ Universe [Publish/Unpublish/Status]
+  │    └─ Universe [Publish/Unpublish]
   ├─ Arrays (container)
-  │    └─ Array (BindTarget, has PowerState, Dimmer, Fade) [Publish/Unpublish/Status]
+  │    └─ Array (BindTarget, has PowerState, Dimmer, Fade) [Publish/Unpublish]
   │         ├─ LightGroup
   │         ├─ ArrayEffect
   │         │    └─ FadeEffect / DelayEffect / SequenceEffect / ParallelEffect (nested)
   │         └─ ArrayValue
   ├─ Effects (container)
-  │    └─ GlobalEffect [Publish/Unpublish/Status]
+  │    └─ GlobalEffect [Publish/Unpublish]
   │         └─ FadeEffect / DelayEffect / SequenceEffect / ParallelEffect (nested)
   └─ Values (container)
-       └─ GlobalValue [Publish/Unpublish/Status]
+       └─ GlobalValue [Publish/Unpublish]
 ```
 
 ## Classes
@@ -82,15 +83,19 @@ Represents a single Art-Net DMX universe.
 | `Channels` | `Int` | min: 1, max: 512 | Number of DMX channels |
 | `Log` | `Boolean?` | | Enable channel-level logging |
 | `DisableSend` | `Boolean?` | | Skip sending packets (testing) |
-| `Status` | `String? managed memoryonly` | | Modified / Published / Unpublished |
 | `Publish` | trigger | | Publishes config to MQTT |
 | `Unpublish` | trigger | | Removes config from MQTT |
 
-**On Publish:** Serializes to JSON and publishes to `DMX/Universe/{name}`:
+**Status tracking via Description suffix:**
+- On any property change (except Description itself): if Description doesn't already end with `" - (modified)"` or `" - (unpublished)"`, append `" - (modified)"`
+- On Publish: strip any status suffix from Description, then publish
+- On Unpublish: strip any status suffix, append `" - (unpublished)"`
+
+**On Publish:** Strips status suffix from Description, serializes to JSON, publishes to `DMX/Universe/{name}`:
 
 ```json
 {
-    "description": "...",
+    "description": "Main stage lights",
     "controller": "10.0.1.228",
     "net": 0,
     "subnet": 0,
@@ -101,11 +106,7 @@ Represents a single Art-Net DMX universe.
 }
 ```
 
-Sets Status = "Published".
-
-**On Unpublish:** Publishes empty message to `DMX/Universe/{name}`. Sets Status = "Unpublished".
-
-**On any property change:** Sets Status = "Modified" (if currently "Published").
+**On Unpublish:** Publishes empty message to `DMX/Universe/{name}`. Appends `" - (unpublished)"` to Description.
 
 ### Array
 
@@ -129,22 +130,23 @@ The primary unit of control. Each array is a BindTarget that equipment (DimmedLi
 | `OnEffect` | `String?` | `"on"` | Effect ID for On command |
 | `OffEffect` | `String?` | `"off"` | Effect ID for Off command |
 | `DimEffect` | `String?` | `"dim"` | Effect ID for Dim command |
-| `Status` | `String? managed memoryonly` | | Modified / Published / Unpublished |
 | `Publish` | trigger | | Publishes config to MQTT |
 | `Unpublish` | trigger | | Removes config from MQTT |
 
 **Contains:** LightGroup, ArrayEffect, ArrayValue children.
 
-**On Publish:** Assembles the full array definition JSON from children:
+**Status tracking via Description suffix** (same pattern as Universe).
+
+**On Publish:** Strips status suffix from Description. Assembles the full array definition JSON from children:
 - `lights` map from LightGroup children (name → Channels string)
 - `effects` map from ArrayEffect children (name → serialized effect tree)
 - `default_values` map from ArrayValue children (name → Value string)
 
-Publishes to `DMX/Array/{name}`. Sets Status = "Published".
+Publishes to `DMX/Array/{name}`.
 
-**On Unpublish:** Publishes empty to `DMX/Array/{name}`. Sets Status = "Unpublished".
+**On Unpublish:** Publishes empty to `DMX/Array/{name}`. Appends `" - (unpublished)"` to Description.
 
-**On child or property change:** Sets Status = "Modified" (if currently "Published").
+**On child or property change:** Appends `" - (modified)"` to Description if no status suffix present.
 
 **Command behavior (always active, regardless of Status):**
 
@@ -230,9 +232,11 @@ A named global effect, defined under the top-level Effects container.
 
 | Property | Type | Notes |
 |----------|------|-------|
-| `Status` | `String? managed memoryonly` | Modified / Published / Unpublished |
+| `Description` | `String?` | Human-readable name, also carries status suffix |
 | `Publish` | trigger | Publishes to MQTT |
 | `Unpublish` | trigger | Removes from MQTT |
+
+**Status tracking via Description suffix** (same pattern as Universe).
 
 Contains one root EffectNode child. Published to `DMX/Effect/{name}`.
 
@@ -244,10 +248,12 @@ A named global variable value.
 
 | Property | Type | Notes |
 |----------|------|-------|
+| `Description` | `String?` | Human-readable name, also carries status suffix |
 | `Value` | `String` | The value content |
-| `Status` | `String? managed memoryonly` | Modified / Published / Unpublished |
 | `Publish` | trigger | Publishes to MQTT |
 | `Unpublish` | trigger | Removes from MQTT |
+
+**Status tracking via Description suffix** (same pattern as Universe).
 
 Published to `DMX/Value/{name}` as: `{"value": "..."}`.
 

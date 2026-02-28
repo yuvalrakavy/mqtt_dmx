@@ -4,7 +4,7 @@
 
 **Goal:** Implement `dmx.sdl`, a Store server SDL module that manages DMX lighting configuration and control via the mqtt_dmx MQTT bridge.
 
-**Architecture:** A single SDL file defining a class hierarchy: DMX root → container classes → Universe, Array, GlobalEffect, GlobalValue. Arrays are BindTargets with PowerState/Dimmer/Fade. All config objects use explicit Publish/Unpublish triggers with Status tracking. Effects are modeled as nested SDL object trees (Fade, Delay, Sequence, Parallel).
+**Architecture:** A single SDL file defining a class hierarchy: DMX root → container classes → Universe, Array, GlobalEffect, GlobalValue. Arrays are BindTargets with PowerState/Dimmer/Fade. All config objects use explicit Publish/Unpublish triggers. Publish status is indicated by a suffix on the Description property (`" - (modified)"`, `" - (unpublished)"`), stripped on publish. Effects are modeled as nested SDL object trees (Fade, Delay, Sequence, Parallel).
 
 **Tech Stack:** SDL (Store Definition Language), Rhai scripting, MQTT integration via `mqtt::publish()` and `mqtt::topic_handlers()`
 
@@ -91,6 +91,26 @@ icons {
 
 module {
     description: "DMX lighting control via mqtt_dmx Art-Net bridge"
+
+    // Strip " - (modified)" or " - (unpublished)" suffix from a description string.
+    fn strip_status_suffix(desc) {
+        if desc == () { return ""; }
+        let s = desc.to_string();
+        if s.ends_with(" - (modified)") {
+            s.sub_string(0, s.len() - 13)
+        } else if s.ends_with(" - (unpublished)") {
+            s.sub_string(0, s.len() - 16)
+        } else {
+            s
+        }
+    }
+
+    // Return true if the description already has a status suffix.
+    fn has_status_suffix(desc) {
+        if desc == () { return false; }
+        let s = desc.to_string();
+        s.ends_with(" - (modified)") || s.ends_with(" - (unpublished)")
+    }
 
     // Root device object — one per system.
     // Subscribes to mqtt_dmx status topics for service health monitoring.
@@ -209,17 +229,15 @@ Add after the DMX class closing brace, still inside `module { }`:
         Log: Boolean? description: "Enable channel-level logging"
         DisableSend: Boolean? description: "Skip sending packets (testing)"
 
-        Status: String? memoryonly managed description: "Publishing status: Modified, Published, Unpublished"
         Publish: Boolean? trigger description: "Publish universe config to mqtt_dmx"
         Unpublish: Boolean? trigger description: "Remove universe from mqtt_dmx"
 
         fn MarkModified() {
-            if self["Status"] == "Published" {
-                self["Status"] = "Modified";
+            if !has_status_suffix(self["Description"]) {
+                self["Description"] = self["Description"].to_string() + " - (modified)";
             }
         }
 
-        on PropertyChanged(Description) { self.call_method("MarkModified", #{}); }
         on PropertyChanged(ControllerAddress) { self.call_method("MarkModified", #{}); }
         on PropertyChanged(Net) { self.call_method("MarkModified", #{}); }
         on PropertyChanged(Subnet) { self.call_method("MarkModified", #{}); }
@@ -229,8 +247,11 @@ Add after the DMX class closing brace, still inside `module { }`:
         on PropertyChanged(DisableSend) { self.call_method("MarkModified", #{}); }
 
         on PropertyChanged(Publish) {
+            let clean_desc = strip_status_suffix(self["Description"]);
+            self["Description"] = clean_desc;
+
             let definition = #{
-                "description": self["Description"],
+                "description": clean_desc,
                 "controller": self["ControllerAddress"],
                 "net": self["Net"],
                 "subnet": self["Subnet"],
@@ -246,12 +267,12 @@ Add after the DMX class closing brace, still inside `module { }`:
             }
 
             mqtt::publish(self, `DMX/Universe/${self.name}`, to_json_blob(definition), true);
-            self["Status"] = "Published";
         }
 
         on PropertyChanged(Unpublish) {
             mqtt::publish(self, `DMX/Universe/${self.name}`, blob(), true);
-            self["Status"] = "Unpublished";
+            let clean_desc = strip_status_suffix(self["Description"]);
+            self["Description"] = clean_desc + " - (unpublished)";
         }
     }
 ```
@@ -261,10 +282,11 @@ Add after the DMX class closing brace, still inside `module { }`:
 Verify:
 - Container classes only have `exposed contains` and metadata
 - Universe properties match mqtt_dmx `UniverseDefinition` JSON schema
-- `MarkModified()` only transitions from "Published" → "Modified"
-- Publish handler builds the JSON and publishes with `retain: true`
-- Unpublish sends an empty blob with `retain: true`
+- `MarkModified()` appends `" - (modified)"` only if no suffix already present
+- Publish handler strips suffix from Description, uses clean description in JSON, publishes with `retain: true`
+- Unpublish sends an empty blob with `retain: true` and appends `" - (unpublished)"` to Description
 - Optional fields (`log`, `disable_send`) only included when true
+- Description PropertyChanged is NOT hooked to MarkModified (user edits to description shouldn't auto-mark)
 
 **Step 3: Commit**
 
@@ -472,12 +494,12 @@ git commit -am "feat(dmx): add LightGroup, ArrayValue, and ArrayEffect classes"
         icon: icon_array
         description: "DMX light array with effects and channel groups"
 
+        Description: String? description: "Human-readable name"
         UniverseId: String description: "Default universe ID for channel references"
         OnEffect: String? description: "Effect ID for On command (default: on)"
         OffEffect: String? description: "Effect ID for Off command (default: off)"
         DimEffect: String? description: "Effect ID for Dim command (default: dim)"
 
-        Status: String? memoryonly managed description: "Publishing status: Modified, Published, Unpublished"
         Publish: Boolean? trigger description: "Publish array config to mqtt_dmx"
         Unpublish: Boolean? trigger description: "Remove array from mqtt_dmx"
 
@@ -486,8 +508,8 @@ git commit -am "feat(dmx): add LightGroup, ArrayValue, and ArrayEffect classes"
         exposed contains ArrayValue
 
         fn MarkModified() {
-            if self["Status"] == "Published" {
-                self["Status"] = "Modified";
+            if !has_status_suffix(self["Description"]) {
+                self["Description"] = self["Description"].to_string() + " - (modified)";
             }
         }
 
@@ -497,6 +519,9 @@ git commit -am "feat(dmx): add LightGroup, ArrayValue, and ArrayEffect classes"
         on PropertyChanged(DimEffect) { self.call_method("MarkModified", #{}); }
 
         on PropertyChanged(Publish) {
+            let clean_desc = strip_status_suffix(self["Description"]);
+            self["Description"] = clean_desc;
+
             // Build lights map from LightGroup children
             let lights = #{};
             for group in self.children_of_type("*Dmx/LightGroup") {
@@ -521,7 +546,7 @@ git commit -am "feat(dmx): add LightGroup, ArrayValue, and ArrayEffect classes"
 
             let definition = #{
                 "universe_id": self["UniverseId"],
-                "description": self.name,
+                "description": clean_desc,
                 "lights": lights,
             };
 
@@ -543,12 +568,12 @@ git commit -am "feat(dmx): add LightGroup, ArrayValue, and ArrayEffect classes"
             }
 
             mqtt::publish(self, `DMX/Array/${self.name}`, to_json_blob(definition), true);
-            self["Status"] = "Published";
         }
 
         on PropertyChanged(Unpublish) {
             mqtt::publish(self, `DMX/Array/${self.name}`, blob(), true);
-            self["Status"] = "Unpublished";
+            let clean_desc = strip_status_suffix(self["Description"]);
+            self["Description"] = clean_desc + " - (unpublished)";
         }
 
         // Command: turn on
@@ -592,7 +617,9 @@ git commit -am "feat(dmx): add LightGroup, ArrayValue, and ArrayEffect classes"
 Verify:
 - `is BindTarget` so equipment can bind to it
 - `has #Component/PowerState`, `Dimmer`, `Fade` provide the standard light control interface
-- Publish handler assembles JSON from children using `children_of_type()`
+- Has `Description` property for status suffix tracking
+- Publish handler strips suffix, uses clean description in JSON, assembles from children using `children_of_type()`
+- Unpublish appends `" - (unpublished)"` to Description
 - `serialize_effect()` call for each ArrayEffect child
 - Power on → publishes On command with dimming_amount from current Intensity
 - Power off → publishes Off command
@@ -622,7 +649,7 @@ git commit -am "feat(dmx): add Array class with publish/unpublish and On/Off/Dim
         icon: icon_effect
         description: "Global effect definition available to all arrays"
 
-        Status: String? memoryonly managed description: "Publishing status: Modified, Published, Unpublished"
+        Description: String? description: "Human-readable name"
         Publish: Boolean? trigger description: "Publish effect to mqtt_dmx"
         Unpublish: Boolean? trigger description: "Remove effect from mqtt_dmx"
 
@@ -632,17 +659,20 @@ git commit -am "feat(dmx): add Array class with publish/unpublish and On/Off/Dim
         contains ParallelEffect
 
         on PropertyChanged(Publish) {
+            let clean_desc = strip_status_suffix(self["Description"]);
+            self["Description"] = clean_desc;
+
             let children = self.children;
             if children.len() > 0 {
                 let effect = serialize_effect(children[0]);
                 mqtt::publish(self, `DMX/Effect/${self.name}`, to_json_blob(effect), true);
-                self["Status"] = "Published";
             }
         }
 
         on PropertyChanged(Unpublish) {
             mqtt::publish(self, `DMX/Effect/${self.name}`, blob(), true);
-            self["Status"] = "Unpublished";
+            let clean_desc = strip_status_suffix(self["Description"]);
+            self["Description"] = clean_desc + " - (unpublished)";
         }
     }
 
@@ -652,29 +682,32 @@ git commit -am "feat(dmx): add Array class with publish/unpublish and On/Off/Dim
         icon: icon_value
         description: "Global variable value for effect parameterization"
 
+        Description: String? description: "Human-readable name"
         Value: String description: "The value content"
 
-        Status: String? memoryonly managed description: "Publishing status: Modified, Published, Unpublished"
         Publish: Boolean? trigger description: "Publish value to mqtt_dmx"
         Unpublish: Boolean? trigger description: "Remove value from mqtt_dmx"
 
         on PropertyChanged(Value) {
-            if self["Status"] == "Published" {
-                self["Status"] = "Modified";
+            if !has_status_suffix(self["Description"]) {
+                self["Description"] = self["Description"].to_string() + " - (modified)";
             }
         }
 
         on PropertyChanged(Publish) {
+            let clean_desc = strip_status_suffix(self["Description"]);
+            self["Description"] = clean_desc;
+
             let definition = #{
                 "value": self["Value"],
             };
             mqtt::publish(self, `DMX/Value/${self.name}`, to_json_blob(definition), true);
-            self["Status"] = "Published";
         }
 
         on PropertyChanged(Unpublish) {
             mqtt::publish(self, `DMX/Value/${self.name}`, blob(), true);
-            self["Status"] = "Unpublished";
+            let clean_desc = strip_status_suffix(self["Description"]);
+            self["Description"] = clean_desc + " - (unpublished)";
         }
     }
 ```
@@ -684,8 +717,10 @@ git commit -am "feat(dmx): add Array class with publish/unpublish and On/Off/Dim
 Verify:
 - GlobalEffect publishes the serialized first child effect node
 - GlobalValue publishes `{"value": "..."}` matching mqtt_dmx's `ValueDefinition`
-- Both have the Publish/Unpublish/Status pattern
-- GlobalValue tracks modifications to its Value property
+- Both have Description property with suffix-based status tracking
+- Publish strips suffix from Description
+- Unpublish appends `" - (unpublished)"` to Description
+- GlobalValue marks Description as modified when Value changes
 
 **Step 3: Commit**
 
