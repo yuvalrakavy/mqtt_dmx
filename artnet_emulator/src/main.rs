@@ -109,6 +109,22 @@ fn main() {
 #[component]
 fn App() -> Element {
     let mut snapshot = use_signal(|| None::<Result<ui::snapshot::EmulatorSnapshot, ServerFnError>>);
+    let mut log_entries = use_signal(Vec::<udp::log::LogEntry>::new);
+
+    use_future(move || async move {
+        let mut last_version = 0u64;
+        loop {
+            match get_log_entries(last_version).await {
+                Ok((version, entries)) => {
+                    last_version = version;
+                    log_entries.set(entries.into_iter().collect());
+                }
+                Err(_) => {
+                    // Re-fetch on next iteration
+                }
+            }
+        }
+    });
 
     use_future(move || async move {
         let result = get_snapshot().await;
@@ -168,6 +184,22 @@ fn App() -> Element {
                                 for (i, &value) in universe.channels.iter().enumerate() {
                                     {render_channel(i + 1, value)}
                                 }
+                            }
+                        }
+                    }
+
+                    // Activity Log panel
+                    div { class: "mt-6 bg-gray-800 rounded-lg p-4",
+                        h2 { class: "text-lg font-semibold mb-2", "Activity Log" }
+                        div { class: "max-h-64 overflow-y-auto text-xs font-mono",
+                            for entry in log_entries().iter().rev() {
+                                div { class: "text-gray-400 py-px",
+                                    span { class: "text-gray-500 mr-2", "{entry.timestamp}" }
+                                    "{entry.message}"
+                                }
+                            }
+                            if log_entries().is_empty() {
+                                p { class: "text-gray-500 italic", "No packets received yet" }
                             }
                         }
                     }
