@@ -63,6 +63,20 @@ The module root. One per system.
 
 **Contains:** Universes, Arrays, Effects, Values (auto-created on `on Created`).
 
+### Publishable (abstract)
+
+Abstract base class for all objects with Publish/Unpublish triggers. Provides shared Description suffix methods for status tracking.
+
+**Properties:** `Description: String?`, `Publish: Boolean? trigger`, `Unpublish: Boolean? trigger`
+
+**Methods:**
+- `MarkModified()` — appends `" - (modified)"` to Description if no suffix present
+- `CleanDescription()` — returns Description with any status suffix stripped
+- `ClearStatus()` — strips suffix from Description in place
+- `MarkUnpublished()` — strips suffix, appends `" - (unpublished)"`
+
+Inherited by: Universe, DmxArray, GlobalEffect, GlobalValue.
+
 ### Container Classes
 
 `Universes`, `Arrays`, `Effects`, `Values` — simple container classes with no logic. They exist for UI organization.

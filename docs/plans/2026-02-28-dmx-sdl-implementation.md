@@ -4,9 +4,15 @@
 
 **Goal:** Implement `dmx.sdl`, a Store server SDL module that manages DMX lighting configuration and control via the mqtt_dmx MQTT bridge.
 
-**Architecture:** A single SDL file defining a class hierarchy: DMX root → container classes → Universe, Array, GlobalEffect, GlobalValue. Arrays are BindTargets with PowerState/Dimmer/Fade. All config objects use explicit Publish/Unpublish triggers. Publish status is indicated by a suffix on the Description property (`" - (modified)"`, `" - (unpublished)"`), stripped on publish. Effects are modeled as nested SDL object trees (Fade, Delay, Sequence, Parallel).
+**Architecture:** A single SDL file defining a class hierarchy: DMX root → container classes → Universe, Array, GlobalEffect, GlobalValue. Arrays are BindTargets with PowerState/Dimmer/Fade. All config objects use explicit Publish/Unpublish triggers. Publish status is indicated by a suffix on the Description property (`" - (modified)"`, `" - (unpublished)"`), stripped on publish. Effects are modeled as nested SDL object trees (Fade, Delay, Sequence, Parallel). An abstract `Publishable` class provides shared Description suffix methods inherited by all publishable objects.
 
 **Tech Stack:** SDL (Store Definition Language), Rhai scripting, MQTT integration via `mqtt::publish()` and `mqtt::topic_handlers()`
+
+**SDL syntax rules:**
+- All `fn` declarations must be inside a class (no module-level functions)
+- Helper functions can be nested inside methods (called directly by name within scope)
+- Class methods are called from event handlers via `self.call_method("MethodName", #{params})`
+- Abstract classes can share utility methods across subclasses via inheritance
 
 **Reference files:**
 - Design: `docs/plans/2026-02-28-dmx-sdl-design.md`
@@ -92,26 +98,6 @@ icons {
 module {
     description: "DMX lighting control via mqtt_dmx Art-Net bridge"
 
-    // Strip " - (modified)" or " - (unpublished)" suffix from a description string.
-    fn strip_status_suffix(desc) {
-        if desc == () { return ""; }
-        let s = desc.to_string();
-        if s.ends_with(" - (modified)") {
-            s.sub_string(0, s.len() - 13)
-        } else if s.ends_with(" - (unpublished)") {
-            s.sub_string(0, s.len() - 16)
-        } else {
-            s
-        }
-    }
-
-    // Return true if the description already has a status suffix.
-    fn has_status_suffix(desc) {
-        if desc == () { return false; }
-        let s = desc.to_string();
-        s.ends_with(" - (modified)") || s.ends_with(" - (unpublished)")
-    }
-
     // Root device object — one per system.
     // Subscribes to mqtt_dmx status topics for service health monitoring.
     class DMX is DeviceObject {
@@ -165,6 +151,7 @@ Verify:
 - `is DeviceObject` makes it a top-level infrastructure object
 - `is #Mqtt/UsingMqtt` provides MqttClient reference property
 - `is #Mqtt/MqttSubscriber` enables TopicHandlers
+- All `fn` declarations are inside the DMX class
 - `on Created` auto-creates the four containers
 - `OnActive` and `OnLastError` parse incoming MQTT messages
 
@@ -177,16 +164,59 @@ git commit -m "feat(dmx): add icons and DMX root class with MQTT status subscrip
 
 ---
 
-### Task 2: Container Classes and Universe
+### Task 2: Publishable Abstract Class, Container Classes, and Universe
 
 **Files:**
 - Modify: `/Users/yuval/Documents/Projects/Store/store_server/modules/dmx.sdl`
 
-**Step 1: Add container classes and Universe inside the `module { }` block**
+**Step 1: Add Publishable abstract class, container classes, and Universe inside `module { }`**
 
 Add after the DMX class closing brace, still inside `module { }`:
 
 ```sdl
+    // Abstract base for all objects with Publish/Unpublish triggers.
+    // Provides shared Description suffix methods for status tracking.
+    abstract class Publishable {
+        Description: String? description: "Human-readable name"
+        Publish: Boolean? trigger description: "Publish config to mqtt_dmx"
+        Unpublish: Boolean? trigger description: "Remove config from mqtt_dmx"
+
+        // Append " - (modified)" suffix if no status suffix present.
+        fn MarkModified() {
+            let desc = self["Description"];
+            if desc == () { return; }
+            let s = desc.to_string();
+            if !s.ends_with(" - (modified)") && !s.ends_with(" - (unpublished)") {
+                self["Description"] = s + " - (modified)";
+            }
+        }
+
+        // Strip any status suffix and return the clean description.
+        fn CleanDescription() {
+            let desc = self["Description"];
+            if desc == () { return ""; }
+            let s = desc.to_string();
+            if s.ends_with(" - (modified)") {
+                s.sub_string(0, s.len() - 13)
+            } else if s.ends_with(" - (unpublished)") {
+                s.sub_string(0, s.len() - 16)
+            } else {
+                s
+            }
+        }
+
+        // Strip suffix from Description and set the clean value.
+        fn ClearStatus() {
+            self["Description"] = self.call_method("CleanDescription", #{});
+        }
+
+        // Strip suffix, append " - (unpublished)".
+        fn MarkUnpublished() {
+            let clean = self.call_method("CleanDescription", #{});
+            self["Description"] = clean + " - (unpublished)";
+        }
+    }
+
     // Container for universe definitions.
     class DmxUniverses {
         icon: icon_container
@@ -216,11 +246,10 @@ Add after the DMX class closing brace, still inside `module { }`:
     }
 
     // A single Art-Net DMX universe with up to 512 channels.
-    class Universe {
+    class Universe is Publishable {
         icon: icon_universe
         description: "Art-Net DMX universe"
 
-        Description: String? description: "Human-readable name"
         ControllerAddress: String description: "Art-Net node IP address"
         Net: Int { min: 0, max: 127, description: "Art-Net net number" }
         Subnet: Int { min: 0, max: 15, description: "Art-Net subnet number" }
@@ -228,15 +257,6 @@ Add after the DMX class closing brace, still inside `module { }`:
         Channels: Int { min: 1, max: 512, description: "Number of DMX channels" }
         Log: Boolean? description: "Enable channel-level logging"
         DisableSend: Boolean? description: "Skip sending packets (testing)"
-
-        Publish: Boolean? trigger description: "Publish universe config to mqtt_dmx"
-        Unpublish: Boolean? trigger description: "Remove universe from mqtt_dmx"
-
-        fn MarkModified() {
-            if !has_status_suffix(self["Description"]) {
-                self["Description"] = self["Description"].to_string() + " - (modified)";
-            }
-        }
 
         on PropertyChanged(ControllerAddress) { self.call_method("MarkModified", #{}); }
         on PropertyChanged(Net) { self.call_method("MarkModified", #{}); }
@@ -247,8 +267,8 @@ Add after the DMX class closing brace, still inside `module { }`:
         on PropertyChanged(DisableSend) { self.call_method("MarkModified", #{}); }
 
         on PropertyChanged(Publish) {
-            let clean_desc = strip_status_suffix(self["Description"]);
-            self["Description"] = clean_desc;
+            self.call_method("ClearStatus", #{});
+            let clean_desc = self.call_method("CleanDescription", #{});
 
             let definition = #{
                 "description": clean_desc,
@@ -271,8 +291,7 @@ Add after the DMX class closing brace, still inside `module { }`:
 
         on PropertyChanged(Unpublish) {
             mqtt::publish(self, `DMX/Universe/${self.name}`, blob(), true);
-            let clean_desc = strip_status_suffix(self["Description"]);
-            self["Description"] = clean_desc + " - (unpublished)";
+            self.call_method("MarkUnpublished", #{});
         }
     }
 ```
@@ -280,18 +299,18 @@ Add after the DMX class closing brace, still inside `module { }`:
 **Step 2: Review**
 
 Verify:
+- `Publishable` abstract class has `Description`, `Publish`, `Unpublish` properties and four utility methods
+- All utility functions (`MarkModified`, `CleanDescription`, `ClearStatus`, `MarkUnpublished`) are inside the Publishable class
+- `Universe is Publishable` — inherits Description, Publish, Unpublish properties and all methods
+- Universe no longer declares its own Description/Publish/Unpublish
 - Container classes only have `exposed contains` and metadata
-- Universe properties match mqtt_dmx `UniverseDefinition` JSON schema
-- `MarkModified()` appends `" - (modified)"` only if no suffix already present
-- Publish handler strips suffix from Description, uses clean description in JSON, publishes with `retain: true`
-- Unpublish sends an empty blob with `retain: true` and appends `" - (unpublished)"` to Description
-- Optional fields (`log`, `disable_send`) only included when true
-- Description PropertyChanged is NOT hooked to MarkModified (user edits to description shouldn't auto-mark)
+- PropertyChanged handlers call methods via `self.call_method()` (required from event handlers)
+- No module-level functions
 
 **Step 3: Commit**
 
 ```bash
-git commit -am "feat(dmx): add container classes and Universe with publish/unpublish"
+git commit -am "feat(dmx): add Publishable base, container classes, and Universe"
 ```
 
 ---
@@ -351,73 +370,17 @@ Add after the Universe class:
     }
 ```
 
-**Step 2: Add the effect serialization helper function**
-
-Add inside `module { }` (module-level function, not inside a class):
-
-```sdl
-    // Recursively serialize an effect node to a JSON-compatible map.
-    fn serialize_effect(node) {
-        if node.is_of_type("*Dmx/FadeEffect") {
-            let effect = #{
-                "type": "fade",
-                "lights": node["Lights"],
-                "ticks": node["Ticks"],
-                "target": node["Target"],
-            };
-
-            // Try to parse ticks as integer
-            let ticks_int = node["Ticks"].parse_int();
-            if ticks_int != () {
-                effect["ticks"] = ticks_int;
-            }
-
-            if node["NoDimming"] {
-                effect["no_dimming"] = true;
-            }
-
-            effect
-        } else if node.is_of_type("*Dmx/DelayEffect") {
-            let effect = #{
-                "type": "delay",
-                "ticks": node["Ticks"],
-            };
-
-            let ticks_int = node["Ticks"].parse_int();
-            if ticks_int != () {
-                effect["ticks"] = ticks_int;
-            }
-
-            effect
-        } else if node.is_of_type("*Dmx/SequenceEffect") {
-            let nodes = [];
-            for child in node.children {
-                nodes.push(serialize_effect(child));
-            }
-            #{ "type": "sequence", "nodes": nodes }
-        } else if node.is_of_type("*Dmx/ParallelEffect") {
-            let nodes = [];
-            for child in node.children {
-                nodes.push(serialize_effect(child));
-            }
-            #{ "type": "parallel", "nodes": nodes }
-        }
-    }
-```
-
-**Step 3: Review**
+**Step 2: Review**
 
 Verify:
 - EffectNode is abstract (no instances, just a type marker)
 - SequenceEffect and ParallelEffect contain all four effect types (including themselves for nesting)
-- `serialize_effect()` recursively builds JSON maps
-- Ticks parsed as int when possible, kept as string (for variable syntax) otherwise
-- NoDimming only included when true
+- No standalone serialization function here — it will be a nested helper inside Publish handlers (Task 5 and Task 6)
 
-**Step 4: Commit**
+**Step 3: Commit**
 
 ```bash
-git commit -am "feat(dmx): add effect node classes and serialization helper"
+git commit -am "feat(dmx): add effect node classes (Fade, Delay, Sequence, Parallel)"
 ```
 
 ---
@@ -484,34 +447,26 @@ git commit -am "feat(dmx): add LightGroup, ArrayValue, and ArrayEffect classes"
 
 **Step 1: Add the Array class inside `module { }`**
 
+Note: `serialize_effect` is defined as a nested function inside the Publish handler, following the DALI pattern where `get_controller_layout()` etc. are nested inside `UpdateConfig()`.
+
 ```sdl
     // Primary unit of control. A named group of lights with effects and default values.
     // Equipment (DimmedLight, etc.) binds to this via BindTarget.
-    class DmxArray is BindTarget {
+    class DmxArray is BindTarget, Publishable {
         has #Component/PowerState
         has #Component/Dimmer
         has #Component/Fade
         icon: icon_array
         description: "DMX light array with effects and channel groups"
 
-        Description: String? description: "Human-readable name"
         UniverseId: String description: "Default universe ID for channel references"
         OnEffect: String? description: "Effect ID for On command (default: on)"
         OffEffect: String? description: "Effect ID for Off command (default: off)"
         DimEffect: String? description: "Effect ID for Dim command (default: dim)"
 
-        Publish: Boolean? trigger description: "Publish array config to mqtt_dmx"
-        Unpublish: Boolean? trigger description: "Remove array from mqtt_dmx"
-
         exposed contains LightGroup
         exposed contains ArrayEffect
         exposed contains ArrayValue
-
-        fn MarkModified() {
-            if !has_status_suffix(self["Description"]) {
-                self["Description"] = self["Description"].to_string() + " - (modified)";
-            }
-        }
 
         on PropertyChanged(UniverseId) { self.call_method("MarkModified", #{}); }
         on PropertyChanged(OnEffect) { self.call_method("MarkModified", #{}); }
@@ -519,8 +474,50 @@ git commit -am "feat(dmx): add LightGroup, ArrayValue, and ArrayEffect classes"
         on PropertyChanged(DimEffect) { self.call_method("MarkModified", #{}); }
 
         on PropertyChanged(Publish) {
-            let clean_desc = strip_status_suffix(self["Description"]);
-            self["Description"] = clean_desc;
+            self.call_method("ClearStatus", #{});
+            let clean_desc = self.call_method("CleanDescription", #{});
+
+            // Nested helper: recursively serialize an effect node to a JSON-compatible map.
+            fn serialize_effect(node) {
+                if node.is_of_type("*Dmx/FadeEffect") {
+                    let effect = #{
+                        "type": "fade",
+                        "lights": node["Lights"],
+                        "ticks": node["Ticks"],
+                        "target": node["Target"],
+                    };
+                    let ticks_int = node["Ticks"].parse_int();
+                    if ticks_int != () {
+                        effect["ticks"] = ticks_int;
+                    }
+                    if node["NoDimming"] {
+                        effect["no_dimming"] = true;
+                    }
+                    effect
+                } else if node.is_of_type("*Dmx/DelayEffect") {
+                    let effect = #{
+                        "type": "delay",
+                        "ticks": node["Ticks"],
+                    };
+                    let ticks_int = node["Ticks"].parse_int();
+                    if ticks_int != () {
+                        effect["ticks"] = ticks_int;
+                    }
+                    effect
+                } else if node.is_of_type("*Dmx/SequenceEffect") {
+                    let nodes = [];
+                    for child in node.children {
+                        nodes.push(serialize_effect(child));
+                    }
+                    #{ "type": "sequence", "nodes": nodes }
+                } else if node.is_of_type("*Dmx/ParallelEffect") {
+                    let nodes = [];
+                    for child in node.children {
+                        nodes.push(serialize_effect(child));
+                    }
+                    #{ "type": "parallel", "nodes": nodes }
+                }
+            }
 
             // Build lights map from LightGroup children
             let lights = #{};
@@ -531,7 +528,6 @@ git commit -am "feat(dmx): add LightGroup, ArrayValue, and ArrayEffect classes"
             // Build effects map from ArrayEffect children
             let effects = #{};
             for effect in self.children_of_type("*Dmx/ArrayEffect") {
-                // Serialize the first child effect node
                 let children = effect.children;
                 if children.len() > 0 {
                     effects[effect.name] = serialize_effect(children[0]);
@@ -572,8 +568,7 @@ git commit -am "feat(dmx): add LightGroup, ArrayValue, and ArrayEffect classes"
 
         on PropertyChanged(Unpublish) {
             mqtt::publish(self, `DMX/Array/${self.name}`, blob(), true);
-            let clean_desc = strip_status_suffix(self["Description"]);
-            self["Description"] = clean_desc + " - (unpublished)";
+            self.call_method("MarkUnpublished", #{});
         }
 
         // Command: turn on
@@ -615,17 +610,14 @@ git commit -am "feat(dmx): add LightGroup, ArrayValue, and ArrayEffect classes"
 **Step 2: Review**
 
 Verify:
-- `is BindTarget` so equipment can bind to it
-- `has #Component/PowerState`, `Dimmer`, `Fade` provide the standard light control interface
-- Has `Description` property for status suffix tracking
-- Publish handler strips suffix, uses clean description in JSON, assembles from children using `children_of_type()`
-- Unpublish appends `" - (unpublished)"` to Description
-- `serialize_effect()` call for each ArrayEffect child
-- Power on → publishes On command with dimming_amount from current Intensity
-- Power off → publishes Off command
-- Intensity change when already on → publishes Dim command
-- Intensity change when off → sets Power = true (which triggers the On command)
-- Commands use `self.get_ancestor_of_type("*Dmx/DMX")` to find the root for MQTT publishing
+- `is BindTarget, Publishable` — inherits both traits
+- `serialize_effect()` is a nested function inside the Publish handler (valid Rhai pattern)
+- `serialize_effect()` calls itself recursively for Sequence/Parallel children
+- Status methods called via `self.call_method()` (inherited from Publishable)
+- Ticks parsed as int when possible, kept as string (for variable syntax) otherwise
+- NoDimming only included when true
+- Power/Intensity handlers use `self.get_ancestor_of_type("*Dmx/DMX")` for MQTT publishing
+- No module-level functions
 
 **Step 3: Commit**
 
@@ -642,16 +634,14 @@ git commit -am "feat(dmx): add Array class with publish/unpublish and On/Off/Dim
 
 **Step 1: Add GlobalEffect and GlobalValue classes inside `module { }`**
 
+Note: `serialize_effect` is duplicated as a nested function inside GlobalEffect's Publish handler (same pattern as DmxArray). This follows SDL's constraint that functions must live inside classes/methods.
+
 ```sdl
     // A named global effect definition.
     // Published to DMX/Effect/{name} for use by any array.
-    class GlobalEffect {
+    class GlobalEffect is Publishable {
         icon: icon_effect
         description: "Global effect definition available to all arrays"
-
-        Description: String? description: "Human-readable name"
-        Publish: Boolean? trigger description: "Publish effect to mqtt_dmx"
-        Unpublish: Boolean? trigger description: "Remove effect from mqtt_dmx"
 
         contains FadeEffect
         contains DelayEffect
@@ -659,8 +649,49 @@ git commit -am "feat(dmx): add Array class with publish/unpublish and On/Off/Dim
         contains ParallelEffect
 
         on PropertyChanged(Publish) {
-            let clean_desc = strip_status_suffix(self["Description"]);
-            self["Description"] = clean_desc;
+            self.call_method("ClearStatus", #{});
+
+            // Nested helper: recursively serialize an effect node to a JSON-compatible map.
+            fn serialize_effect(node) {
+                if node.is_of_type("*Dmx/FadeEffect") {
+                    let effect = #{
+                        "type": "fade",
+                        "lights": node["Lights"],
+                        "ticks": node["Ticks"],
+                        "target": node["Target"],
+                    };
+                    let ticks_int = node["Ticks"].parse_int();
+                    if ticks_int != () {
+                        effect["ticks"] = ticks_int;
+                    }
+                    if node["NoDimming"] {
+                        effect["no_dimming"] = true;
+                    }
+                    effect
+                } else if node.is_of_type("*Dmx/DelayEffect") {
+                    let effect = #{
+                        "type": "delay",
+                        "ticks": node["Ticks"],
+                    };
+                    let ticks_int = node["Ticks"].parse_int();
+                    if ticks_int != () {
+                        effect["ticks"] = ticks_int;
+                    }
+                    effect
+                } else if node.is_of_type("*Dmx/SequenceEffect") {
+                    let nodes = [];
+                    for child in node.children {
+                        nodes.push(serialize_effect(child));
+                    }
+                    #{ "type": "sequence", "nodes": nodes }
+                } else if node.is_of_type("*Dmx/ParallelEffect") {
+                    let nodes = [];
+                    for child in node.children {
+                        nodes.push(serialize_effect(child));
+                    }
+                    #{ "type": "parallel", "nodes": nodes }
+                }
+            }
 
             let children = self.children;
             if children.len() > 0 {
@@ -671,32 +702,24 @@ git commit -am "feat(dmx): add Array class with publish/unpublish and On/Off/Dim
 
         on PropertyChanged(Unpublish) {
             mqtt::publish(self, `DMX/Effect/${self.name}`, blob(), true);
-            let clean_desc = strip_status_suffix(self["Description"]);
-            self["Description"] = clean_desc + " - (unpublished)";
+            self.call_method("MarkUnpublished", #{});
         }
     }
 
     // A named global variable value.
     // Published to DMX/Value/{name} for use in effect variable expressions.
-    class GlobalValue {
+    class GlobalValue is Publishable {
         icon: icon_value
         description: "Global variable value for effect parameterization"
 
-        Description: String? description: "Human-readable name"
         Value: String description: "The value content"
 
-        Publish: Boolean? trigger description: "Publish value to mqtt_dmx"
-        Unpublish: Boolean? trigger description: "Remove value from mqtt_dmx"
-
         on PropertyChanged(Value) {
-            if !has_status_suffix(self["Description"]) {
-                self["Description"] = self["Description"].to_string() + " - (modified)";
-            }
+            self.call_method("MarkModified", #{});
         }
 
         on PropertyChanged(Publish) {
-            let clean_desc = strip_status_suffix(self["Description"]);
-            self["Description"] = clean_desc;
+            self.call_method("ClearStatus", #{});
 
             let definition = #{
                 "value": self["Value"],
@@ -706,8 +729,7 @@ git commit -am "feat(dmx): add Array class with publish/unpublish and On/Off/Dim
 
         on PropertyChanged(Unpublish) {
             mqtt::publish(self, `DMX/Value/${self.name}`, blob(), true);
-            let clean_desc = strip_status_suffix(self["Description"]);
-            self["Description"] = clean_desc + " - (unpublished)";
+            self.call_method("MarkUnpublished", #{});
         }
     }
 ```
@@ -715,12 +737,11 @@ git commit -am "feat(dmx): add Array class with publish/unpublish and On/Off/Dim
 **Step 2: Review**
 
 Verify:
-- GlobalEffect publishes the serialized first child effect node
-- GlobalValue publishes `{"value": "..."}` matching mqtt_dmx's `ValueDefinition`
-- Both have Description property with suffix-based status tracking
-- Publish strips suffix from Description
-- Unpublish appends `" - (unpublished)"` to Description
-- GlobalValue marks Description as modified when Value changes
+- `GlobalEffect is Publishable` and `GlobalValue is Publishable` — inherit Description, Publish, Unpublish, and status methods
+- `serialize_effect()` is a nested function inside GlobalEffect's Publish handler (duplicated from DmxArray — necessary since SDL doesn't support module-level functions)
+- GlobalValue calls `self.call_method("MarkModified", #{})` from PropertyChanged(Value)
+- All method calls from event handlers use `self.call_method()` syntax
+- No module-level functions
 
 **Step 3: Commit**
 
@@ -740,26 +761,28 @@ git commit -am "feat(dmx): add GlobalEffect and GlobalValue with publish/unpubli
 Read through the entire file and verify:
 - All classes are inside the `module { }` block
 - `icons { }` block is before `module { }`
+- **No module-level functions** — all `fn` are inside classes or nested inside methods
 - No syntax errors (matching braces, correct SDL syntax)
 - All `contains` declarations match actual class names
 - All cross-references use `*Dmx/ClassName` format
-- `serialize_effect()` function is at module level, not inside a class
 - MQTT topics match mqtt_dmx documentation exactly
+- All `PropertyChanged` handlers call methods via `self.call_method()`
 
 **Step 2: Verify class hierarchy completeness**
 
 Check that every class from the design doc is implemented:
 - [ ] DMX (root)
+- [ ] Publishable (abstract base for status tracking)
 - [ ] DmxUniverses, DmxArrays, DmxEffects, DmxValues (containers)
-- [ ] Universe
-- [ ] DmxArray
+- [ ] Universe (is Publishable)
+- [ ] DmxArray (is BindTarget, Publishable)
 - [ ] LightGroup
 - [ ] ArrayEffect
 - [ ] ArrayValue
 - [ ] EffectNode (abstract)
 - [ ] FadeEffect, DelayEffect, SequenceEffect, ParallelEffect
-- [ ] GlobalEffect
-- [ ] GlobalValue
+- [ ] GlobalEffect (is Publishable)
+- [ ] GlobalValue (is Publishable)
 
 **Step 3: Verify MQTT topic coverage**
 
@@ -774,7 +797,16 @@ Check against design doc MQTT topic map:
 - [ ] `DMX/Active` — subscribed by DMX root
 - [ ] `DMX/LastError` — subscribed by DMX root
 
-**Step 4: Commit final version**
+**Step 4: Verify SDL syntax compliance**
+
+- [ ] No `fn` declarations at module level (all inside classes or nested in methods)
+- [ ] All event handler method calls use `self.call_method("Name", #{})` syntax
+- [ ] Nested functions (serialize_effect) are inside method bodies, called directly by name
+- [ ] Abstract classes use `abstract class` keyword
+- [ ] Trigger properties use `trigger` keyword
+- [ ] Managed properties use `managed` keyword
+
+**Step 5: Commit final version**
 
 ```bash
 git commit -am "feat(dmx): complete dmx.sdl module - final review pass"
