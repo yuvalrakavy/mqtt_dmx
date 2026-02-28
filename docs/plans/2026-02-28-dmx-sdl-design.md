@@ -67,7 +67,7 @@ The module root. One per system.
 
 Abstract base class for all objects with Publish/Unpublish triggers. Provides shared Description suffix methods for status tracking.
 
-**Properties:** `Description: String?`, `Publish: Boolean? trigger`, `Unpublish: Boolean? trigger`
+**Properties:** `Publish: Boolean? trigger`, `Unpublish: Boolean? trigger` (Description is inherited from Object)
 
 **Methods:**
 - `MarkModified()` — appends `" - (modified)"` to Description if no suffix present
@@ -89,7 +89,6 @@ Represents a single Art-Net DMX universe.
 
 | Property | Type | Constraints | Notes |
 |----------|------|-------------|-------|
-| `Description` | `String` | | Human-readable name |
 | `ControllerAddress` | `String` | | Art-Net node IP address |
 | `Net` | `Int` | min: 0, max: 127 | Art-Net net number |
 | `Subnet` | `Int` | min: 0, max: 15 | Art-Net subnet |
@@ -140,7 +139,6 @@ The primary unit of control. Each array is a BindTarget that equipment (DimmedLi
 | Property | Type | Default | Notes |
 |----------|------|---------|-------|
 | `UniverseId` | `String` | (required) | Default universe for channel references |
-| `Description` | `String` | (required) | Human-readable name |
 | `OnEffect` | `String?` | `"on"` | Effect ID for On command |
 | `OffEffect` | `String?` | `"off"` | Effect ID for Off command |
 | `DimEffect` | `String?` | `"dim"` | Effect ID for Dim command |
@@ -246,7 +244,6 @@ A named global effect, defined under the top-level Effects container.
 
 | Property | Type | Notes |
 |----------|------|-------|
-| `Description` | `String?` | Human-readable name, also carries status suffix |
 | `Publish` | trigger | Publishes to MQTT |
 | `Unpublish` | trigger | Removes from MQTT |
 
@@ -262,7 +259,6 @@ A named global variable value.
 
 | Property | Type | Notes |
 |----------|------|-------|
-| `Description` | `String?` | Human-readable name, also carries status suffix |
 | `Value` | `String` | The value content |
 | `Publish` | trigger | Publishes to MQTT |
 | `Unpublish` | trigger | Removes from MQTT |

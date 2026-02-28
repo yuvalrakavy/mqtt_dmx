@@ -177,7 +177,6 @@ Add after the DMX class closing brace, still inside `module { }`:
     // Abstract base for all objects with Publish/Unpublish triggers.
     // Provides shared Description suffix methods for status tracking.
     abstract class Publishable {
-        Description: String? description: "Human-readable name"
         Publish: Boolean? trigger description: "Publish config to mqtt_dmx"
         Unpublish: Boolean? trigger description: "Remove config from mqtt_dmx"
 
@@ -299,10 +298,9 @@ Add after the DMX class closing brace, still inside `module { }`:
 **Step 2: Review**
 
 Verify:
-- `Publishable` abstract class has `Description`, `Publish`, `Unpublish` properties and four utility methods
+- `Publishable` abstract class has `Publish`, `Unpublish` trigger properties and four utility methods (Description is inherited from Object)
 - All utility functions (`MarkModified`, `CleanDescription`, `ClearStatus`, `MarkUnpublished`) are inside the Publishable class
-- `Universe is Publishable` — inherits Description, Publish, Unpublish properties and all methods
-- Universe no longer declares its own Description/Publish/Unpublish
+- `Universe is Publishable` — inherits Publish, Unpublish triggers and all methods
 - Container classes only have `exposed contains` and metadata
 - PropertyChanged handlers call methods via `self.call_method()` (required from event handlers)
 - No module-level functions
@@ -737,7 +735,7 @@ Note: `serialize_effect` is duplicated as a nested function inside GlobalEffect'
 **Step 2: Review**
 
 Verify:
-- `GlobalEffect is Publishable` and `GlobalValue is Publishable` — inherit Description, Publish, Unpublish, and status methods
+- `GlobalEffect is Publishable` and `GlobalValue is Publishable` — inherit Publish, Unpublish triggers and status methods (Description from Object)
 - `serialize_effect()` is a nested function inside GlobalEffect's Publish handler (duplicated from DmxArray — necessary since SDL doesn't support module-level functions)
 - GlobalValue calls `self.call_method("MarkModified", #{})` from PropertyChanged(Value)
 - All method calls from event handlers use `self.call_method()` syntax
