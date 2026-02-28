@@ -1,4 +1,5 @@
 use error_stack::{Report, ResultExt};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -12,6 +13,7 @@ use crate::{
     defs::{self, EffectNodeDefinition, DIMMING_AMOUNT_MAX},
     defs::{EffectUsage, UniverseDefinition},
     messages,
+    persistence::Persistence,
     service::MqttError,
 };
 
@@ -19,6 +21,11 @@ struct MqttSubscriber {
     to_artnet_tx: Sender<messages::ToArtnetManagerMessage>,
     to_array_tx: Sender<messages::ToArrayManagerMessage>,
     to_mqtt_publisher_tx: async_channel::Sender<messages::ToMqttPublisherMessage>,
+    persistence: Arc<Persistence>,
+    universes: HashMap<Arc<str>, defs::UniverseDefinition>,
+    arrays: HashMap<Arc<str>, defs::DmxArray>,
+    effects: HashMap<Arc<str>, defs::EffectNodeDefinition>,
+    values: HashMap<Arc<str>, String>,
 }
 
 pub async fn session(
@@ -26,14 +33,20 @@ pub async fn session(
     to_artnet_tx: Sender<messages::ToArtnetManagerMessage>,
     to_array_tx: Sender<messages::ToArrayManagerMessage>,
     to_mqtt_publisher_tx: async_channel::Sender<messages::ToMqttPublisherMessage>,
+    persistence: Arc<Persistence>,
 ) -> Result<(), Report<MqttError>> {
     info!("Starting MQTT subscriber session");
     let into_context = || MqttError::Context("In MQTT subscriber session".to_string());
 
-    let mqtt_subscriber = MqttSubscriber {
+    let mut mqtt_subscriber = MqttSubscriber {
         to_artnet_tx,
         to_array_tx,
         to_mqtt_publisher_tx,
+        persistence,
+        universes: HashMap::new(),
+        arrays: HashMap::new(),
+        effects: HashMap::new(),
+        values: HashMap::new(),
     };
 
     loop {
@@ -82,7 +95,7 @@ impl MqttSubscriber {
         result.map_err(|_| Report::new(MqttError::ChannelClosed))
     }
 
-    async fn handle_message(&self, topic: &str, payload: &Bytes) -> Result<(), Report<MqttError>> {
+    async fn handle_message(&mut self, topic: &str, payload: &Bytes) -> Result<(), Report<MqttError>> {
         let topic_parts: Vec<&str> = topic.split('/').collect();
 
         if topic_parts.len() < 2 {
@@ -136,7 +149,7 @@ impl MqttSubscriber {
     }
 
     async fn handle_universe_message(
-        &self,
+        &mut self,
         universe_id: Arc<str>,
         payload: &Bytes,
     ) -> Result<(), Report<MqttError>> {
@@ -145,7 +158,7 @@ impl MqttSubscriber {
             let (tx_artnet_reply, rx_artnet_reply) = oneshot::channel::<Result<(), Report<ArtnetError>>>();
 
             self.send_artnet(messages::ToArtnetManagerMessage::RemoveUniverse(
-                universe_id,
+                universe_id.clone(),
                 tx_artnet_reply,
             ))
             .await?;
@@ -154,9 +167,13 @@ impl MqttSubscriber {
                 return Err(e)
                     .change_context_lazy(|| MqttError::Context(String::from("removing universe")));
             }
+
+            self.universes.remove(&universe_id);
+            self.persistence.save_universes(&self.universes);
         } else {
             match serde_json::from_slice::<UniverseDefinition>(payload) {
                 Ok(definition) => {
+                    let definition_clone = definition.clone();
                     let (tx_artnet_reply, rx_artnet_reply) =
                         oneshot::channel::<Result<(), Report<ArtnetError>>>();
 
@@ -172,6 +189,9 @@ impl MqttSubscriber {
                             MqttError::Context(format!("adding universe {universe_id}"))
                         });
                     }
+
+                    self.universes.insert(universe_id, definition_clone);
+                    self.persistence.save_universes(&self.universes);
                 }
                 Err(e) => {
                     return Err(MqttError::JsonParseError(
@@ -190,7 +210,7 @@ impl MqttSubscriber {
     }
 
     async fn handle_array_message(
-        &self,
+        &mut self,
         array_id: Arc<str>,
         payload: &Bytes,
     ) -> Result<(), Report<MqttError>> {
@@ -209,11 +229,15 @@ impl MqttSubscriber {
                     MqttError::Context(format!("removing array {array_id}"))
                 });
             }
+
+            self.arrays.remove(&array_id);
+            self.persistence.save_arrays(&self.arrays);
         } else {
             let into_context = || MqttError::Context(format!("adding array {array_id}"));
 
             match serde_json::from_slice::<defs::DmxArray>(payload) {
                 Ok(definition) => {
+                    let definition_clone = definition.clone();
                     let (tx, rx) = oneshot::channel::<Result<(), Report<DmxArrayError>>>();
 
                     self.send_array(messages::ToArrayManagerMessage::AddArray(
@@ -226,6 +250,9 @@ impl MqttSubscriber {
                     if let Err(e) = Self::recv_reply(rx.await)? {
                         return Err(e).change_context_lazy(into_context);
                     }
+
+                    self.arrays.insert(array_id, definition_clone);
+                    self.persistence.save_arrays(&self.arrays);
                 }
                 Err(e) => return Err(e).change_context_lazy(into_context),
             }
@@ -235,7 +262,7 @@ impl MqttSubscriber {
     }
 
     async fn handle_value_message(
-        &self,
+        &mut self,
         value_name: Arc<str>,
         payload: &Bytes,
     ) -> Result<(), Report<MqttError>> {
@@ -253,11 +280,15 @@ impl MqttSubscriber {
                     MqttError::Context(format!("removing global value {value_name}"))
                 });
             }
+
+            self.values.remove(&value_name);
+            self.persistence.save_values(&self.values);
         } else {
             let into_context = || MqttError::Context(format!("adding global value {value_name}"));
 
             match serde_json::from_slice::<defs::ValueDefinition>(payload) {
                 Ok(value_definition) => {
+                    let value = value_definition.value.clone();
                     let (tx, rx) = oneshot::channel::<Result<(), Report<DmxArrayError>>>();
 
                     self.send_array(messages::ToArrayManagerMessage::AddGlobalValue(
@@ -270,6 +301,9 @@ impl MqttSubscriber {
                     if let Err(e) = Self::recv_reply(rx.await)? {
                         return Err(e).change_context_lazy(into_context);
                     }
+
+                    self.values.insert(value_name, value.to_string());
+                    self.persistence.save_values(&self.values);
                 }
                 Err(e) => return Err(e).change_context_lazy(into_context),
             }
@@ -279,7 +313,7 @@ impl MqttSubscriber {
     }
 
     async fn handle_effect_message(
-        &self,
+        &mut self,
         effect_id: Arc<str>,
         payload: &Bytes,
     ) -> Result<(), Report<MqttError>> {
@@ -297,11 +331,15 @@ impl MqttSubscriber {
                     MqttError::Context(format!("removing effect {effect_id}"))
                 });
             }
+
+            self.effects.remove(&effect_id);
+            self.persistence.save_effects(&self.effects);
         } else {
             let into_context = || MqttError::Context(format!("adding effect {effect_id}"));
 
             match serde_json::from_slice::<EffectNodeDefinition>(payload) {
                 Ok(effect_definition) => {
+                    let effect_definition_clone = effect_definition.clone();
                     let (tx, rx) = oneshot::channel::<Result<(), Report<DmxArrayError>>>();
 
                     self.send_array(messages::ToArrayManagerMessage::AddEffect(
@@ -314,6 +352,9 @@ impl MqttSubscriber {
                     if let Err(e) = Self::recv_reply(rx.await)? {
                         return Err(e).change_context_lazy(into_context);
                     }
+
+                    self.effects.insert(effect_id, effect_definition_clone);
+                    self.persistence.save_effects(&self.effects);
                 }
 
                 Err(e) => return Err(e).change_context_lazy(into_context),
@@ -323,7 +364,7 @@ impl MqttSubscriber {
     }
 
     async fn handle_command_message(
-        &self,
+        &mut self,
         command: Arc<str>,
         payload: &Bytes,
     ) -> Result<(), Report<MqttError>> {

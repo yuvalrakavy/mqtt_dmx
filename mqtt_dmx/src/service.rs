@@ -1,5 +1,5 @@
 use error_stack::{Report, ResultExt};
-use log::info;
+use log::{error, info};
 use rumqttc::{AsyncClient, EventLoop, LastWill, MqttOptions, QoS};
 use std::{marker::PhantomData, path::PathBuf, sync::Arc};
 use thiserror::Error;
@@ -13,6 +13,7 @@ use crate::{
     get_version,
     messages::{self, ToArtnetManagerMessage},
     mqtt_publisher, mqtt_subscriber,
+    persistence::Persistence,
 };
 
 pub struct Started {}
@@ -114,6 +115,7 @@ impl Service {
         to_array_tx: Sender<messages::ToArrayManagerMessage>,
         to_mqtt_publisher_rx: async_channel::Receiver<messages::ToMqttPublisherMessage>,
         to_mqtt_publisher_tx: async_channel::Sender<messages::ToMqttPublisherMessage>,
+        persistence: Arc<Persistence>,
     ) -> Result<(), Report<MqttError>> {
         let mut mqtt_workers = JoinSet::new();
 
@@ -131,6 +133,7 @@ impl Service {
                 to_artnet_tx,
                 to_array_tx,
                 to_mqtt_publisher_tx,
+                persistence,
             )
             .await;
             info!("MQTT subscriber session ended: {:?}", e)
@@ -148,6 +151,7 @@ impl Service {
         to_array_tx: Sender<messages::ToArrayManagerMessage>,
         to_mqtt_publisher_rx: async_channel::Receiver<messages::ToMqttPublisherMessage>,
         to_mqtt_publisher_tx: async_channel::Sender<messages::ToMqttPublisherMessage>,
+        persistence: Arc<Persistence>,
     ) {
         loop {
             let _ = Self::mqtt_session(
@@ -156,6 +160,7 @@ impl Service {
                     to_array_tx.clone(),
                     to_mqtt_publisher_rx.clone(),
                     to_mqtt_publisher_tx.clone(),
+                    persistence.clone(),
                 )
                 .await;
 
@@ -198,6 +203,11 @@ impl Service<Stopped> {
             array_manager.run(cancel_instance, to_array_rx).await;
         });
 
+        let persistence = Arc::new(Persistence::new(self.config.storage_path.clone()));
+        if let Err(e) = persistence.ensure_directory() {
+            error!("Failed to create storage directory: {}", e);
+        }
+
         let broker_address = self.config.mqtt_broker_address.clone();
 
         self.workers.spawn(async move {
@@ -207,6 +217,7 @@ impl Service<Stopped> {
                 to_array_tx,
                 to_mqtt_publisher_rx,
                 to_mqtt_publisher_tx,
+                persistence,
             )
             .await;
         });
