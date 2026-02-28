@@ -1,1 +1,1 @@
-// UI module - will be populated in Task 6
+pub mod snapshot;
