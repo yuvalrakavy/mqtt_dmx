@@ -28,44 +28,47 @@ fn main() {
         .parse_or_exit();
 
         // Load config or start with empty state
-        let emulator_state = if let Some(config_path) = &args.config_path {
+        let (emulator_state, config_port, config_web_port) = if let Some(config_path) = &args.config_path {
             match std::fs::read_to_string(config_path) {
                 Ok(json) => match serde_json::from_str::<config::Config>(&json) {
                     Ok(cfg) => {
                         if let Err(e) = cfg.validate() {
-                            eprintln!("Config validation error: {e}");
-                            std::process::exit(1);
+                            eprintln!("Config validation warning: {e} — starting in auto-discovery mode");
+                            (state::EmulatorState::empty(), None, None)
+                        } else {
+                            let ports = (Some(cfg.port), Some(cfg.web_port));
+                            let mut state = cfg.to_emulator_state();
+                            state.config_path = Some(config_path.clone());
+                            println!(
+                                "Loaded config '{}': {} universes",
+                                config_path,
+                                state.universes.len()
+                            );
+                            (state, ports.0, ports.1)
                         }
-                        let mut state = cfg.to_emulator_state();
-                        state.config_path = Some(config_path.clone());
-                        println!(
-                            "Loaded config '{}': {} universes",
-                            config_path,
-                            state.universes.len()
-                        );
-                        state
                     }
                     Err(e) => {
-                        eprintln!("Error parsing config '{config_path}': {e}");
-                        std::process::exit(1);
+                        eprintln!("Error parsing config '{config_path}': {e} — starting in auto-discovery mode");
+                        (state::EmulatorState::empty(), None, None)
                     }
                 },
                 Err(e) => {
-                    eprintln!("Error reading config '{config_path}': {e}");
-                    std::process::exit(1);
+                    eprintln!("Error reading config '{config_path}': {e} — starting in auto-discovery mode");
+                    (state::EmulatorState::empty(), None, None)
                 }
             }
         } else {
             println!("No config file — running in auto-discovery mode");
-            state::EmulatorState::empty()
+            (state::EmulatorState::empty(), None, None)
         };
 
         let shared_state = Arc::new(RwLock::new(emulator_state));
         let shared_log = SharedLog::new(500);
         let state_version = StateVersionNotifier::new();
 
-        let udp_port = args.port;
-        let web_port = args.web_port;
+        // CLI args override config values; config values override defaults
+        let udp_port = if args.port != 6454 { args.port } else { config_port.unwrap_or(args.port) };
+        let web_port = if args.web_port != 8080 { args.web_port } else { config_web_port.unwrap_or(args.web_port) };
 
         println!("Starting ArtNet Emulator — UDP port: {udp_port}, Web port: {web_port}");
 
