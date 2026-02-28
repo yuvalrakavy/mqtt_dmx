@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::{select, sync::mpsc::Receiver};
 use tokio_util::sync::CancellationToken;
-use error_stack::Result;
+use error_stack::Report;
 
 use super::error::DmxArrayError;
 use crate::defs::{DmxArray, EffectNodeDefinition, SymbolTable};
@@ -66,18 +66,18 @@ impl ArrayManager {
         &mut self,
         array_id: Arc<str>,
         array: Box<DmxArray>,
-    ) -> Result<(), DmxArrayError> {
+    ) -> Result<(), Report<DmxArrayError>> {
         self.verify_array(&array_id, &array)?;
         self.arrays.insert(array_id, array);
         Ok(())
     }
 
-    pub fn remove_array(&mut self, name: Arc<str>) -> Result<(), DmxArrayError> {
+    pub fn remove_array(&mut self, name: Arc<str>) -> Result<(), Report<DmxArrayError>> {
         self.arrays.remove(&name);
         Ok(())
     }
 
-    pub(super) fn get_array(&self, array_id: &str) -> Result<&DmxArray, DmxArrayError> {
+    pub(super) fn get_array(&self, array_id: &str) -> Result<&DmxArray, Report<DmxArrayError>> {
         match self.arrays.get(array_id) {
             None => Err(DmxArrayError::ArrayNotFound(Arc::from(array_id)).into()),
             Some(array) => Ok(array),
@@ -87,31 +87,31 @@ impl ArrayManager {
     fn handle_message(&mut self, message: ToArrayManagerMessage) {
         match message {
             ToArrayManagerMessage::AddArray(array_id, array, reply_tx) => {
-                reply_tx.send(self.add_array(array_id, array)).unwrap()
+                let _ = reply_tx.send(self.add_array(array_id, array));
             }
 
             ToArrayManagerMessage::RemoveArray(array_id, reply_tx) => {
-                reply_tx.send(self.remove_array(array_id)).unwrap()
+                let _ = reply_tx.send(self.remove_array(array_id));
             }
 
             ToArrayManagerMessage::AddGlobalValue(value_name, value, reply_tx) => {
-                reply_tx.send(self.set_global_value(value_name, &value)).unwrap()
+                let _ = reply_tx.send(self.set_global_value(value_name, &value));
             }
 
             ToArrayManagerMessage::InitializeArrayValues(array_id, values, reply_tx) => {
-                reply_tx.send(self.initialize_array_values(array_id, values)).unwrap()
+                let _ = reply_tx.send(self.initialize_array_values(array_id, values));
             }
 
             ToArrayManagerMessage::RemoveGlobalValue(value_name, reply_tx) => {
-                reply_tx.send(self.remove_global_value(&value_name)).unwrap()
+                let _ = reply_tx.send(self.remove_global_value(&value_name));
             }
 
             ToArrayManagerMessage::AddEffect(effect_id, effect, reply_tx) => {
-                reply_tx.send(self.add_effect(effect_id, effect)).unwrap()
+                let _ = reply_tx.send(self.add_effect(effect_id, effect));
             }
 
             ToArrayManagerMessage::RemoveEffect(effect_id, reply_tx) => {
-                reply_tx.send(self.remove_effect(&effect_id)).unwrap()
+                let _ = reply_tx.send(self.remove_effect(&effect_id));
             }
 
             ToArrayManagerMessage::GetEffectRuntime(
@@ -120,14 +120,14 @@ impl ArrayManager {
                 effect_id,
                 dimming_amount,
                 reply_tx,
-            ) => reply_tx
-                .send(self.get_usage_effect_runtime(
+            ) => {
+                let _ = reply_tx.send(self.get_usage_effect_runtime(
                     &effect_usage,
                     &array_id,
                     effect_id.as_ref(),
                     dimming_amount,
-                ))
-                .unwrap(),
+                ));
+            }
         }
     }
 
@@ -147,6 +147,6 @@ impl ArrayManager {
             }
         }
 
-        info!("ArtnetManager stopped");
+        info!("ArrayManager stopped");
     }
 }

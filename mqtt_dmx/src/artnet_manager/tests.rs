@@ -111,8 +111,11 @@ mod test_universe {
         };
         let result = universe.set_channel(&channel_value);
 
-        match result {
-            Err(ArtnetError::InvalidChannel(d, 306, 306)) if d == "test (Test Universe)" => {}
+        match &result {
+            Err(report) => match report.current_context() {
+                ArtnetError::InvalidChannel(d, 306, 306) if d == "test (Test Universe)" => {}
+                other => panic!("Expected InvalidChannel error, got {:?}", other),
+            },
             _ => panic!("Expected InvalidChannel error, got {:?}", result),
         }
     }
@@ -126,8 +129,11 @@ mod test_universe {
             .is_ok());
         let result = universe.get_channel(&ChannelDefinition::Rgb(306, 100, 200));
 
-        match result {
-            Err(ArtnetError::InvalidChannel(d, 306, 306)) if d == "test (Test Universe)" => {}
+        match &result {
+            Err(report) => match report.current_context() {
+                ArtnetError::InvalidChannel(d, 306, 306) if d == "test (Test Universe)" => {}
+                other => panic!("Expected InvalidChannel error, got {:?}", other),
+            },
             _ => panic!("Expected InvalidChannel error, got {:?}", result),
         }
     }
@@ -163,7 +169,7 @@ mod test_artnet_manager {
         let (to_artnet_manager_sender, to_artnet_manager_receiver) =
             tokio::sync::mpsc::channel::<ToArtnetManagerMessage>(10);
         let (to_mqtt_publisher_sender, _) =
-            tokio::sync::mpsc::channel::<ToMqttPublisherMessage>(10);
+            async_channel::bounded::<ToMqttPublisherMessage>(10);
 
         tokio::spawn(async move {
             let mut manager = ArtnetManager::new();
@@ -206,8 +212,8 @@ mod test_artnet_manager {
 
         // Remove the second universe and ensure that the controller is gone
         assert!(manager.remove_universe("test2").is_ok());
-        assert!(manager.universes.len() == 0);
-        assert!(manager.controllers.len() == 0);
+        assert!(manager.universes.is_empty());
+        assert!(manager.controllers.is_empty());
     }
 
     #[test]

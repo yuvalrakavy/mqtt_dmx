@@ -1,5 +1,5 @@
 use crate::artnet_manager::ArtnetError;
-use crate::defs::{DimmingAmount, TargetValue};
+use crate::defs::{DimmingAmount, TargetValue, DIMMING_AMOUNT_MAX};
 use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 
@@ -173,6 +173,7 @@ impl TargetValue {
     }
 
     pub fn get_dimmed_value(&self, dimming_amount: DimmingAmount) -> TargetValue {
+        let dimming_amount = dimming_amount.min(DIMMING_AMOUNT_MAX);
         TargetValue {
             rgb: self.rgb.map(|(r, g, b)| {
                 (

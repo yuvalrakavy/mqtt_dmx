@@ -1,5 +1,5 @@
 
-use error_stack::Result;
+use error_stack::Report;
 use std::collections::HashMap;
 use std::fmt::Display;
 
@@ -34,23 +34,23 @@ impl Display for ChannelUsage {
 }
 
 impl ArrayManager {
-    pub (super) fn verify_array(&self, array_id: &str, array: &DmxArray) -> Result<(), DmxArrayError> {
+    pub (super) fn verify_array(&self, array_id: &str, array: &DmxArray) -> Result<(), Report<DmxArrayError>> {
         Self::verify_array_lights(array_id, array)?;
         Ok(())
     }
 
-    pub (super) fn verify_array_lights(array_id: &str, array: &DmxArray) -> Result<(), DmxArrayError> {
+    pub (super) fn verify_array_lights(array_id: &str, array: &DmxArray) -> Result<(), Report<DmxArrayError>> {
         let add_light_usage = |group_name: &str,
                                channel_usage: &mut HashMap<String, HashMap<u16, ChannelUsage>>,
                                must_exist: bool,
                                lights: Vec<UniverseChannelDefinitions>|
-         -> Result<(), DmxArrayError> {
+         -> Result<(), Report<DmxArrayError>> {
             for universe_channel_definition in lights.iter() {
                 let universe_usage = channel_usage
                     .entry(universe_channel_definition.universe_id.clone())
                     .or_default();
                 let mut add_channel_usage =
-                    |channel: u16, usage: ChannelUsage| -> Result<(), DmxArrayError> {
+                    |channel: u16, usage: ChannelUsage| -> Result<(), Report<DmxArrayError>> {
                         if let Some(existing_usage) = universe_usage.get(&channel) {
                             if *existing_usage != usage {
                                 return Err(DmxArrayError::ArrayLightChannelUsageMismatch(

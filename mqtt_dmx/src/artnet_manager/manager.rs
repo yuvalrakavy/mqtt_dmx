@@ -1,9 +1,8 @@
 use log::{info, debug, trace};
-use error_stack::{Result, ResultExt};
+use error_stack::{Report, ResultExt};
 use std::{
     collections::HashMap,
     fmt::Debug,
-    iter::repeat,
     mem,
     net::{IpAddr, UdpSocket},
     sync::{Arc, Weak},
@@ -40,7 +39,7 @@ pub(super) struct Universe {
 }
 
 pub trait EffectNodeRuntime: Debug + Send {
-    fn tick(&mut self, artnet_manager: &mut ArtnetManager) -> Result<(), ArtnetError>;
+    fn tick(&mut self, artnet_manager: &mut ArtnetManager) -> Result<(), Report<ArtnetError>>;
     fn is_done(&self) -> bool;
 }
 
@@ -74,9 +73,17 @@ impl ArtnetManager {
         &mut self,
         universe_id: &str,
         definition: UniverseDefinition,
-    ) -> Result<(), ArtnetError> {
+    ) -> Result<(), Report<ArtnetError>> {
         let controller = match self.controllers.get(&definition.controller) {
-            Some(c) => c.upgrade().unwrap(),
+            Some(c) => match c.upgrade() {
+                Some(c) => c,
+                None => {
+                    let controller = Arc::new(ArtnetController::new(&definition.controller)?);
+                    self.controllers
+                        .insert(definition.controller, Arc::downgrade(&controller));
+                    controller
+                }
+            },
             None => {
                 let controller = Arc::new(ArtnetController::new(&definition.controller)?);
                 self.controllers
@@ -91,7 +98,7 @@ impl ArtnetManager {
         Ok(())
     }
 
-    pub(super) fn remove_universe(&mut self, universe_id: &str) -> Result<(), ArtnetError> {
+    pub(super) fn remove_universe(&mut self, universe_id: &str) -> Result<(), Report<ArtnetError>> {
         self.universes
             .remove(universe_id)
             .ok_or_else(|| ArtnetError::InvalidUniverse(universe_id.to_string()))?;
@@ -114,19 +121,19 @@ impl ArtnetManager {
         &mut self,
         effect_id: &str,
         effect: Box<dyn EffectNodeRuntime>,
-    ) -> Result<(), ArtnetError> {
+    ) -> Result<(), Report<ArtnetError>> {
         info!("Starting effect {}: {:?}", effect_id, effect);
         self.active_effects.insert(effect_id.to_owned(), effect);
         Ok(())
     }
 
-    fn stop_effect(&mut self, effect_id: &str) -> Result<(), ArtnetError> {
+    fn stop_effect(&mut self, effect_id: &str) -> Result<(), Report<ArtnetError>> {
         info!("Stopping effect {}", effect_id);
         self.active_effects.remove(effect_id);
         Ok(())
     }
 
-    fn tick(&mut self) -> Result<(), ArtnetError> {
+    fn tick(&mut self) -> Result<(), Report<ArtnetError>> {
         let mut active_effects = mem::take(&mut self.active_effects);
         let mut completed_effect: Vec<String> = Vec::new();
 
@@ -147,7 +154,7 @@ impl ArtnetManager {
         Ok(())
     }
 
-    pub fn set_channel(&mut self, universe_id: &str, v: &ChannelValue) -> Result<(), ArtnetError> {
+    pub fn set_channel(&mut self, universe_id: &str, v: &ChannelValue) -> Result<(), Report<ArtnetError>> {
         trace!("Setting channel {} to {:?}", v.channel, v.value);
 
         match self.universes.get_mut(universe_id) {
@@ -166,14 +173,14 @@ impl ArtnetManager {
         &self,
         universe_id: &str,
         channel_definition: &ChannelDefinition,
-    ) -> Result<ChannelValue, ArtnetError> {
+    ) -> Result<ChannelValue, Report<ArtnetError>> {
         match self.universes.get(universe_id) {
             Some(u) => u.get_channel(channel_definition),
             None => Err(ArtnetError::InvalidUniverse(universe_id.to_string()).into()),
         }
     }
 
-    fn send_modified_universes(&mut self) -> Result<(), ArtnetError> {
+    fn send_modified_universes(&mut self) -> Result<(), Report<ArtnetError>> {
         for (universe_id, universe) in self.universes.iter_mut() {
             if !universe.modified {
                 universe.non_modified_ticks += 1;
@@ -193,14 +200,14 @@ impl ArtnetManager {
     fn set_channels(
         &mut self,
         parameters: &defs::SetChannelsParameters,
-    ) -> Result<(), ArtnetError> {
+    ) -> Result<(), Report<ArtnetError>> {
         let into_context = || ArtnetError::Context(format!("Setting channels {:?}", parameters));
         let mut target = parameters.target.parse::<TargetValue>()?;
         let channels = parameters
             .channels
             .split(',')
             .map(|c| c.parse::<ChannelDefinition>().change_context_lazy(into_context))
-            .collect::<Result<Vec<ChannelDefinition>, _>>()?;
+            .collect::<Result<Vec<ChannelDefinition>, Report<_>>>()?;
 
         if let Some(dimming_amount) = parameters.dimming_amount {
             target = target.get_dimmed_value(dimming_amount);
@@ -228,22 +235,20 @@ impl ArtnetManager {
 
     fn handle_message(&mut self, message: ToArtnetManagerMessage) {
         match message {
-            ToArtnetManagerMessage::AddUniverse(universe_id, definition, reply_tx) => reply_tx
-                .send(self.add_universe(&universe_id, definition))
-                .unwrap(),
+            ToArtnetManagerMessage::AddUniverse(universe_id, definition, reply_tx) => {
+                let _ = reply_tx.send(self.add_universe(&universe_id, definition));
+            }
             ToArtnetManagerMessage::RemoveUniverse(universe_id, sender) => {
-                sender.send(self.remove_universe(&universe_id)).unwrap()
+                let _ = sender.send(self.remove_universe(&universe_id));
             }
             ToArtnetManagerMessage::StartEffect(effect_id, effect_node_runtime, reply_tx) => {
-                reply_tx
-                    .send(self.start_effect(&effect_id, effect_node_runtime))
-                    .unwrap()
+                let _ = reply_tx.send(self.start_effect(&effect_id, effect_node_runtime));
             }
             ToArtnetManagerMessage::StopEffect(effect_id, sender) => {
-                sender.send(self.stop_effect(&effect_id)).unwrap()
+                let _ = sender.send(self.stop_effect(&effect_id));
             }
             ToArtnetManagerMessage::SetChannels(parameters, sender) => {
-                sender.send(self.set_channels(&parameters)).unwrap()
+                let _ = sender.send(self.set_channels(&parameters));
             }
         }
     }
@@ -263,11 +268,15 @@ impl ArtnetManager {
 
                 _ = tick_timer.tick() => {
                     if let Err(e) = self.tick() {
-                        to_mqtt_publisher.send(ToMqttPublisherMessage::Error(e.to_string())).await.unwrap();
+                        if to_mqtt_publisher.send(ToMqttPublisherMessage::Error(e.to_string())).await.is_err() {
+                            break;
+                        }
                     }
 
                     if let Err(e) = self.send_modified_universes() {
-                        to_mqtt_publisher.send(ToMqttPublisherMessage::Error(e.to_string())).await.unwrap();
+                        if to_mqtt_publisher.send(ToMqttPublisherMessage::Error(e.to_string())).await.is_err() {
+                            break;
+                        }
                     }
                 },
 
@@ -283,18 +292,23 @@ impl ArtnetManager {
 }
 
 impl ArtnetController {
-    pub fn new(controller: &IpAddr) -> Result<ArtnetController, ArtnetError> {
+    pub fn new(controller: &IpAddr) -> Result<ArtnetController, Report<ArtnetError>> {
         let into_context = || ArtnetError::Context(format!("Creating artnet controller at {}", controller));
 
         let socket = UdpSocket::bind("0.0.0.0:0").change_context_lazy(into_context)?;
         socket.connect((*controller, DMX_UDP_PORT)).change_context_lazy(into_context)?;
+        socket.set_nonblocking(true).change_context_lazy(into_context)?;
 
         Ok(ArtnetController { socket })
     }
 
-    pub fn send(&self, packet_bytes: &[u8]) -> Result<(), ArtnetError> {
-        self.socket.send(packet_bytes).change_context_lazy(|| ArtnetError::Context(String::from("Sending Artnet packet")))?;
-        Ok(())
+    pub fn send(&self, packet_bytes: &[u8]) -> Result<(), Report<ArtnetError>> {
+        match self.socket.send(packet_bytes) {
+            Ok(_) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(()),
+            Err(e) => Err(Report::new(e)
+                .change_context(ArtnetError::Context(String::from("Sending Artnet packet")))),
+        }
     }
 }
 
@@ -303,7 +317,7 @@ impl Universe {
         controller: Arc<ArtnetController>,
         universe_id: &str,
         definition: UniverseDefinition,
-    ) -> Result<Universe, ArtnetError> {
+    ) -> Result<Universe, Report<ArtnetError>> {
         let into_context = || ArtnetError::Context(format!("Creating universe {}", universe_id));
 
         if definition.universe > 15 {
@@ -334,8 +348,15 @@ impl Universe {
         packet_bytes.push((channel_count >> 8) as u8); // Length Hi
         packet_bytes.push((channel_count & 0xff) as u8); // Length Lo
 
-        assert_eq!(packet_bytes.len(), DMX_DATA_OFFSET);
-        packet_bytes.extend(repeat(0x00).take(channel_count));
+        if packet_bytes.len() != DMX_DATA_OFFSET {
+            return Err(ArtnetError::Context(format!(
+                "Internal error: packet header size mismatch ({} != {})",
+                packet_bytes.len(),
+                DMX_DATA_OFFSET
+            )))
+            .change_context_lazy(into_context);
+        }
+        packet_bytes.extend(std::iter::repeat_n(0x00, channel_count));
 
         Ok(Universe {
             description: format!("{0} ({1})", universe_id, definition.description),
@@ -357,7 +378,7 @@ impl Universe {
         (self.packet_bytes.len() - DMX_DATA_OFFSET) as u16
     }
 
-    fn validate_channel(&self, channel: u16) -> Result<(), ArtnetError> {
+    fn validate_channel(&self, channel: u16) -> Result<(), Report<ArtnetError>> {
         if channel >= self.get_channel_count() {
             Err(ArtnetError::InvalidChannel(
                 self.description.clone(),
@@ -369,7 +390,7 @@ impl Universe {
         }
     }
 
-    pub fn set_channel(&mut self, v: &ChannelValue) -> Result<(), ArtnetError> {
+    pub fn set_channel(&mut self, v: &ChannelValue) -> Result<(), Report<ArtnetError>> {
         match v.channel {
             ChannelDefinition::Single(channel) => {
                 self.validate_channel(channel)?;
@@ -427,7 +448,7 @@ impl Universe {
     pub fn get_channel(
         &self,
         channel_definition: &ChannelDefinition,
-    ) -> Result<ChannelValue, ArtnetError> {
+    ) -> Result<ChannelValue, Report<ArtnetError>> {
         match channel_definition {
             ChannelDefinition::Single(s) => {
                 self.validate_channel(*s)?;
@@ -468,7 +489,7 @@ impl Universe {
         }
     }
 
-    pub fn send(&mut self) -> Result<(), ArtnetError> {
+    pub fn send(&mut self) -> Result<(), Report<ArtnetError>> {
         if !self.disable_send {
             self.controller.send(self.packet_bytes.as_slice())?;
         }

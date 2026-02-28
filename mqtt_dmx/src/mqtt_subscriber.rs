@@ -1,4 +1,4 @@
-use error_stack::{Result, ResultExt};
+use error_stack::{Report, ResultExt};
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -26,7 +26,7 @@ pub async fn session(
     to_artnet_tx: Sender<messages::ToArtnetManagerMessage>,
     to_array_tx: Sender<messages::ToArrayManagerMessage>,
     to_mqtt_publisher_tx: async_channel::Sender<messages::ToMqttPublisherMessage>,
-) -> Result<(), MqttError> {
+) -> Result<(), Report<MqttError>> {
     info!("Starting MQTT subscriber session");
     let into_context = || MqttError::Context("In MQTT subscriber session".to_string());
 
@@ -56,7 +56,33 @@ pub async fn session(
 }
 
 impl MqttSubscriber {
-    async fn handle_message(&self, topic: &str, payload: &Bytes) -> Result<(), MqttError> {
+    async fn send_artnet(
+        &self,
+        msg: messages::ToArtnetManagerMessage,
+    ) -> Result<(), Report<MqttError>> {
+        self.to_artnet_tx
+            .send(msg)
+            .await
+            .map_err(|_| Report::new(MqttError::ChannelClosed))
+    }
+
+    async fn send_array(
+        &self,
+        msg: messages::ToArrayManagerMessage,
+    ) -> Result<(), Report<MqttError>> {
+        self.to_array_tx
+            .send(msg)
+            .await
+            .map_err(|_| Report::new(MqttError::ChannelClosed))
+    }
+
+    fn recv_reply<T>(
+        result: Result<T, oneshot::error::RecvError>,
+    ) -> Result<T, Report<MqttError>> {
+        result.map_err(|_| Report::new(MqttError::ChannelClosed))
+    }
+
+    async fn handle_message(&self, topic: &str, payload: &Bytes) -> Result<(), Report<MqttError>> {
         let topic_parts: Vec<&str> = topic.split('/').collect();
 
         if topic_parts.len() < 2 {
@@ -113,20 +139,18 @@ impl MqttSubscriber {
         &self,
         universe_id: Arc<str>,
         payload: &Bytes,
-    ) -> Result<(), MqttError> {
+    ) -> Result<(), Report<MqttError>> {
         // If no payload is given, remove the universe
         if payload.is_empty() {
-            let (tx_artnet_reply, rx_artnet_reply) = oneshot::channel::<Result<(), ArtnetError>>();
+            let (tx_artnet_reply, rx_artnet_reply) = oneshot::channel::<Result<(), Report<ArtnetError>>>();
 
-            self.to_artnet_tx
-                .send(messages::ToArtnetManagerMessage::RemoveUniverse(
-                    universe_id,
-                    tx_artnet_reply,
-                ))
-                .await
-                .unwrap();
+            self.send_artnet(messages::ToArtnetManagerMessage::RemoveUniverse(
+                universe_id,
+                tx_artnet_reply,
+            ))
+            .await?;
 
-            if let Err(e) = rx_artnet_reply.await.unwrap() {
+            if let Err(e) = Self::recv_reply(rx_artnet_reply.await)? {
                 return Err(e)
                     .change_context_lazy(|| MqttError::Context(String::from("removing universe")));
             }
@@ -134,18 +158,16 @@ impl MqttSubscriber {
             match serde_json::from_slice::<UniverseDefinition>(payload) {
                 Ok(definition) => {
                     let (tx_artnet_reply, rx_artnet_reply) =
-                        oneshot::channel::<Result<(), ArtnetError>>();
+                        oneshot::channel::<Result<(), Report<ArtnetError>>>();
 
-                    self.to_artnet_tx
-                        .send(messages::ToArtnetManagerMessage::AddUniverse(
-                            universe_id.clone(),
-                            definition,
-                            tx_artnet_reply,
-                        ))
-                        .await
-                        .unwrap();
+                    self.send_artnet(messages::ToArtnetManagerMessage::AddUniverse(
+                        universe_id.clone(),
+                        definition,
+                        tx_artnet_reply,
+                    ))
+                    .await?;
 
-                    if let Err(e) = rx_artnet_reply.await.unwrap() {
+                    if let Err(e) = Self::recv_reply(rx_artnet_reply.await)? {
                         return Err(e).change_context_lazy(|| {
                             MqttError::Context(format!("adding universe {universe_id}"))
                         });
@@ -171,20 +193,18 @@ impl MqttSubscriber {
         &self,
         array_id: Arc<str>,
         payload: &Bytes,
-    ) -> Result<(), MqttError> {
+    ) -> Result<(), Report<MqttError>> {
         // If no payload is given, remove the array
         if payload.is_empty() {
-            let (tx, rx) = oneshot::channel::<Result<(), DmxArrayError>>();
+            let (tx, rx) = oneshot::channel::<Result<(), Report<DmxArrayError>>>();
 
-            self.to_array_tx
-                .send(messages::ToArrayManagerMessage::RemoveArray(
-                    array_id.clone(),
-                    tx,
-                ))
-                .await
-                .unwrap();
+            self.send_array(messages::ToArrayManagerMessage::RemoveArray(
+                array_id.clone(),
+                tx,
+            ))
+            .await?;
 
-            if let Err(e) = rx.await.unwrap() {
+            if let Err(e) = Self::recv_reply(rx.await)? {
                 return Err(e).change_context_lazy(|| {
                     MqttError::Context(format!("removing array {array_id}"))
                 });
@@ -194,18 +214,16 @@ impl MqttSubscriber {
 
             match serde_json::from_slice::<defs::DmxArray>(payload) {
                 Ok(definition) => {
-                    let (tx, rx) = oneshot::channel::<Result<(), DmxArrayError>>();
+                    let (tx, rx) = oneshot::channel::<Result<(), Report<DmxArrayError>>>();
 
-                    self.to_array_tx
-                        .send(messages::ToArrayManagerMessage::AddArray(
-                            array_id.clone(),
-                            Box::new(definition),
-                            tx,
-                        ))
-                        .await
-                        .unwrap();
+                    self.send_array(messages::ToArrayManagerMessage::AddArray(
+                        array_id.clone(),
+                        Box::new(definition),
+                        tx,
+                    ))
+                    .await?;
 
-                    if let Err(e) = rx.await.unwrap() {
+                    if let Err(e) = Self::recv_reply(rx.await)? {
                         return Err(e).change_context_lazy(into_context);
                     }
                 }
@@ -220,19 +238,17 @@ impl MqttSubscriber {
         &self,
         value_name: Arc<str>,
         payload: &Bytes,
-    ) -> Result<(), MqttError> {
+    ) -> Result<(), Report<MqttError>> {
         if payload.is_empty() {
-            let (tx, rx) = oneshot::channel::<Result<(), DmxArrayError>>();
+            let (tx, rx) = oneshot::channel::<Result<(), Report<DmxArrayError>>>();
 
-            self.to_array_tx
-                .send(messages::ToArrayManagerMessage::RemoveGlobalValue(
-                    value_name.to_owned(),
-                    tx,
-                ))
-                .await
-                .unwrap();
+            self.send_array(messages::ToArrayManagerMessage::RemoveGlobalValue(
+                value_name.to_owned(),
+                tx,
+            ))
+            .await?;
 
-            if let Err(e) = rx.await.unwrap() {
+            if let Err(e) = Self::recv_reply(rx.await)? {
                 return Err(e).change_context_lazy(|| {
                     MqttError::Context(format!("removing global value {value_name}"))
                 });
@@ -242,18 +258,16 @@ impl MqttSubscriber {
 
             match serde_json::from_slice::<defs::ValueDefinition>(payload) {
                 Ok(value_definition) => {
-                    let (tx, rx) = oneshot::channel::<Result<(), DmxArrayError>>();
+                    let (tx, rx) = oneshot::channel::<Result<(), Report<DmxArrayError>>>();
 
-                    self.to_array_tx
-                        .send(messages::ToArrayManagerMessage::AddGlobalValue(
-                            value_name.clone(),
-                            value_definition.value,
-                            tx,
-                        ))
-                        .await
-                        .unwrap();
+                    self.send_array(messages::ToArrayManagerMessage::AddGlobalValue(
+                        value_name.clone(),
+                        value_definition.value,
+                        tx,
+                    ))
+                    .await?;
 
-                    if let Err(e) = rx.await.unwrap() {
+                    if let Err(e) = Self::recv_reply(rx.await)? {
                         return Err(e).change_context_lazy(into_context);
                     }
                 }
@@ -268,19 +282,17 @@ impl MqttSubscriber {
         &self,
         effect_id: Arc<str>,
         payload: &Bytes,
-    ) -> Result<(), MqttError> {
+    ) -> Result<(), Report<MqttError>> {
         if payload.is_empty() {
-            let (tx, rx) = oneshot::channel::<Result<(), DmxArrayError>>();
+            let (tx, rx) = oneshot::channel::<Result<(), Report<DmxArrayError>>>();
 
-            self.to_array_tx
-                .send(messages::ToArrayManagerMessage::RemoveEffect(
-                    effect_id.clone(),
-                    tx,
-                ))
-                .await
-                .unwrap();
+            self.send_array(messages::ToArrayManagerMessage::RemoveEffect(
+                effect_id.clone(),
+                tx,
+            ))
+            .await?;
 
-            if let Err(e) = rx.await.unwrap() {
+            if let Err(e) = Self::recv_reply(rx.await)? {
                 return Err(e).change_context_lazy(|| {
                     MqttError::Context(format!("removing effect {effect_id}"))
                 });
@@ -290,18 +302,16 @@ impl MqttSubscriber {
 
             match serde_json::from_slice::<EffectNodeDefinition>(payload) {
                 Ok(effect_definition) => {
-                    let (tx, rx) = oneshot::channel::<Result<(), DmxArrayError>>();
+                    let (tx, rx) = oneshot::channel::<Result<(), Report<DmxArrayError>>>();
 
-                    self.to_array_tx
-                        .send(messages::ToArrayManagerMessage::AddEffect(
-                            effect_id.clone(),
-                            effect_definition,
-                            tx,
-                        ))
-                        .await
-                        .unwrap();
+                    self.send_array(messages::ToArrayManagerMessage::AddEffect(
+                        effect_id.clone(),
+                        effect_definition,
+                        tx,
+                    ))
+                    .await?;
 
-                    if let Err(e) = rx.await.unwrap() {
+                    if let Err(e) = Self::recv_reply(rx.await)? {
                         return Err(e).change_context_lazy(into_context);
                     }
                 }
@@ -316,15 +326,17 @@ impl MqttSubscriber {
         &self,
         command: Arc<str>,
         payload: &Bytes,
-    ) -> Result<(), MqttError> {
+    ) -> Result<(), Report<MqttError>> {
         match command.as_ref() {
             "On" | "Off" | "Dim" => {
-                let usage = command.parse::<EffectUsage>().unwrap();
+                let usage = command
+                    .parse::<EffectUsage>()
+                    .map_err(|e| Report::new(MqttError::InvalidCommand(e)))?;
 
                 let command_parameters =
                     serde_json::from_slice::<defs::OnOffCommandParameters>(payload)
                         .change_context_lazy(|| {
-                            MqttError::Context(format!("parsing{command} command parameters"))
+                            MqttError::Context(format!("parsing {command} command parameters"))
                         })?;
 
                 let array_id = command_parameters.array_id.clone();
@@ -333,56 +345,50 @@ impl MqttSubscriber {
 
                 // If values were provided, set them as the array values
                 if let Some(initial_values) = command_parameters.values {
-                    let (tx, rx) = oneshot::channel::<Result<(), DmxArrayError>>();
+                    let (tx, rx) = oneshot::channel::<Result<(), Report<DmxArrayError>>>();
 
-                    self.to_array_tx
-                        .send(messages::ToArrayManagerMessage::InitializeArrayValues(
-                            command_parameters.array_id.clone(),
-                            initial_values,
-                            tx,
-                        ))
-                        .await
-                        .unwrap();
+                    self.send_array(messages::ToArrayManagerMessage::InitializeArrayValues(
+                        command_parameters.array_id.clone(),
+                        initial_values,
+                        tx,
+                    ))
+                    .await?;
 
-                    let _ = rx.await.unwrap();
+                    let _ = Self::recv_reply(rx.await)?;
                 }
 
                 let (tx, rx) =
-                    oneshot::channel::<Result<Box<dyn EffectNodeRuntime>, DmxArrayError>>();
+                    oneshot::channel::<Result<Box<dyn EffectNodeRuntime>, Report<DmxArrayError>>>();
 
                 // Use the array ID as the effect ID
                 let effect_id = command_parameters.array_id.clone();
 
-                self.to_array_tx
-                    .send(messages::ToArrayManagerMessage::GetEffectRuntime(
-                        command_parameters.array_id,
-                        usage,
-                        command_parameters.effect_id,
-                        command_parameters
-                            .dimming_amount
-                            .unwrap_or(DIMMING_AMOUNT_MAX),
-                        tx,
-                    ))
-                    .await
-                    .unwrap();
+                self.send_array(messages::ToArrayManagerMessage::GetEffectRuntime(
+                    command_parameters.array_id,
+                    usage,
+                    command_parameters.effect_id,
+                    command_parameters
+                        .dimming_amount
+                        .unwrap_or(DIMMING_AMOUNT_MAX),
+                    tx,
+                ))
+                .await?;
 
-                let result = rx.await.unwrap();
+                let result = Self::recv_reply(rx.await)?;
 
                 match result {
                     Err(e) => return Err(e).change_context_lazy(into_context),
                     Ok(effect_runtime_node) => {
-                        let (tx, rx) = oneshot::channel::<Result<(), ArtnetError>>();
+                        let (tx, rx) = oneshot::channel::<Result<(), Report<ArtnetError>>>();
 
-                        self.to_artnet_tx
-                            .send(messages::ToArtnetManagerMessage::StartEffect(
-                                effect_id,
-                                effect_runtime_node,
-                                tx,
-                            ))
-                            .await
-                            .unwrap();
+                        self.send_artnet(messages::ToArtnetManagerMessage::StartEffect(
+                            effect_id,
+                            effect_runtime_node,
+                            tx,
+                        ))
+                        .await?;
 
-                        if let Err(e) = rx.await.unwrap() {
+                        if let Err(e) = Self::recv_reply(rx.await)? {
                             return Err(e).change_context_lazy(into_context);
                         }
                     }
@@ -397,16 +403,15 @@ impl MqttSubscriber {
                         })?;
 
                 let array_id = command_parameters.array_id.clone();
-                let (tx, rx) = oneshot::channel::<Result<(), ArtnetError>>();
+                let (tx, rx) = oneshot::channel::<Result<(), Report<ArtnetError>>>();
 
-                self.to_artnet_tx
-                    .send(messages::ToArtnetManagerMessage::StopEffect(
-                        command_parameters.array_id,
-                        tx,
-                    ))
-                    .await
-                    .unwrap();
-                if let Err(e) = rx.await.unwrap() {
+                self.send_artnet(messages::ToArtnetManagerMessage::StopEffect(
+                    command_parameters.array_id,
+                    tx,
+                ))
+                .await?;
+
+                if let Err(e) = Self::recv_reply(rx.await)? {
                     return Err(e).change_context_lazy(|| {
                         MqttError::Context(format!("stopping effect on array {array_id}"))
                     });
@@ -421,16 +426,15 @@ impl MqttSubscriber {
                         })?;
                 let universe_id = command_parameters.universe_id.clone();
 
-                let (tx, rx) = oneshot::channel::<Result<(), ArtnetError>>();
+                let (tx, rx) = oneshot::channel::<Result<(), Report<ArtnetError>>>();
 
-                self.to_artnet_tx
-                    .send(messages::ToArtnetManagerMessage::SetChannels(
-                        command_parameters,
-                        tx,
-                    ))
-                    .await
-                    .unwrap();
-                if let Err(e) = rx.await.unwrap() {
+                self.send_artnet(messages::ToArtnetManagerMessage::SetChannels(
+                    command_parameters,
+                    tx,
+                ))
+                .await?;
+
+                if let Err(e) = Self::recv_reply(rx.await)? {
                     return Err(e).change_context_lazy(|| {
                         MqttError::Context(format!("setting channels on universe {universe_id}"))
                     });

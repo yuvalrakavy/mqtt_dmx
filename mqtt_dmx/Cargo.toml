@@ -1,0 +1,29 @@
+[package]
+name = "mqtt_dmx"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+thiserror = "2.0.18"
+error-stack = "0.6.0" 
+tokio = { version="1.49.0", features = ["full", "tracing"]}
+tokio-stream = "0.1.18"
+tokio-util = "0.7.18"
+async-channel = "2.5.0"
+serde_json = "1.0.149"
+serde = { version = "1.0.228", features = ["derive", "rc"] }
+rumqttc = { version = "0.25.1", default-features = false }
+rustop = "1.1.4"
+log = "0.4.29"
+chrono = { version = "0.4.44", features = ["serde"] }
+bytes = "1.11.1"
+tracing-init = { git="http://github.com/yuvalrakavy/tracing-init.git" }
+built = "0.8.0" 
+
+[build-dependencies]
+built = { version= "0.8.0", features = ["chrono"] }
+
+# to run with logging use
+#  RUST_LOG=trace,rumqttc=off mqtt_ac ...

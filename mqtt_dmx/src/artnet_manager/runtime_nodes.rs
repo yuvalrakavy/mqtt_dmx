@@ -1,4 +1,4 @@
-use error_stack::Result;
+use error_stack::Report;
 use super::manager::{ArtnetManager, EffectNodeRuntime};
 use super::ArtnetError;
 use crate::array_manager::{error::DmxArrayError, Scope};
@@ -16,12 +16,12 @@ impl defs::SequenceEffectNodeDefinition {
     pub fn get_runtime_node(
         &self,
         scope: &Scope,
-    ) -> Result<Box<dyn EffectNodeRuntime>, DmxArrayError> {
+    ) -> Result<Box<dyn EffectNodeRuntime>, Report<DmxArrayError>> {
         let nodes = self
             .nodes
             .iter()
             .map(|node| node.get_runtime_node(scope))
-            .collect::<Result<Vec<Box<dyn EffectNodeRuntime>>, DmxArrayError>>()?;
+            .collect::<Result<Vec<Box<dyn EffectNodeRuntime>>, Report<DmxArrayError>>>()?;
         Ok(Box::new(SequenceEffectNode {
             nodes,
             current_node: 0,
@@ -30,7 +30,7 @@ impl defs::SequenceEffectNodeDefinition {
 }
 
 impl EffectNodeRuntime for SequenceEffectNode {
-    fn tick(&mut self, artnet_manager: &mut ArtnetManager) -> Result<(), ArtnetError> {
+    fn tick(&mut self, artnet_manager: &mut ArtnetManager) -> Result<(), Report<ArtnetError>> {
         if self.current_node < self.nodes.len() {
             self.nodes[self.current_node].tick(artnet_manager)?;
             if self.nodes[self.current_node].is_done() {
@@ -50,12 +50,12 @@ impl defs::ParallelEffectNodeDefinition {
     pub fn get_runtime_node(
         &self,
         scope: &Scope,
-    ) -> Result<Box<dyn EffectNodeRuntime>, DmxArrayError> {
+    ) -> Result<Box<dyn EffectNodeRuntime>, Report<DmxArrayError>> {
         let nodes = self
             .nodes
             .iter()
             .map(|node| node.get_runtime_node(scope))
-            .collect::<Result<Vec<Box<dyn EffectNodeRuntime>>, DmxArrayError>>()?;
+            .collect::<Result<Vec<Box<dyn EffectNodeRuntime>>, Report<DmxArrayError>>>()?;
 
         Ok(Box::new(ParallelEffectNode { nodes }))
     }
@@ -67,7 +67,7 @@ pub struct ParallelEffectNode {
 }
 
 impl EffectNodeRuntime for ParallelEffectNode {
-    fn tick(&mut self, artnet_manager: &mut ArtnetManager) -> Result<(), ArtnetError> {
+    fn tick(&mut self, artnet_manager: &mut ArtnetManager) -> Result<(), Report<ArtnetError>> {
         for node in self.nodes.iter_mut() {
             node.tick(artnet_manager)?;
         }
@@ -84,7 +84,7 @@ impl defs::DelayEffectNodeDefinition {
     pub fn get_runtime_node(
         &self,
         scope: &Scope,
-    ) -> Result<Box<dyn EffectNodeRuntime>, DmxArrayError> {
+    ) -> Result<Box<dyn EffectNodeRuntime>, Report<DmxArrayError>> {
         Ok(Box::new(DelayEffectNode {
             ticks: self.ticks.get_value(scope, "delay ticks parameter")?,
             current_tick: 0,
@@ -99,7 +99,7 @@ pub struct DelayEffectNode {
 }
 
 impl EffectNodeRuntime for DelayEffectNode {
-    fn tick(&mut self, _: &mut ArtnetManager) -> Result<(), ArtnetError> {
+    fn tick(&mut self, _: &mut ArtnetManager) -> Result<(), Report<ArtnetError>> {
         if self.current_tick < self.ticks {
             self.current_tick += 1;
         }
@@ -116,10 +116,18 @@ impl defs::FadeEffectNodeDefinition {
     pub fn get_runtime_node(
         &self,
         scope: &Scope,
-    ) -> Result<Box<dyn EffectNodeRuntime>, DmxArrayError> {
+    ) -> Result<Box<dyn EffectNodeRuntime>, Report<DmxArrayError>> {
         let lights_list = scope.expand_values(&self.lights)?;
         let lights = scope.get_light_channels(&lights_list)?;
         let ticks = self.ticks.get_value(scope, "fade ticks parameter")?;
+        if ticks == 0 {
+            return Err(DmxArrayError::ValueError(
+                scope.to_string(),
+                "fade ticks parameter",
+                "ticks must be greater than 0".to_string(),
+            )
+            .into());
+        }
         let target = scope
             .expand_values(&self.target)?
             .parse::<TargetValue>()
@@ -148,7 +156,7 @@ pub struct FadeEffectNode {
 }
 
 impl EffectNodeRuntime for FadeEffectNode {
-    fn tick(&mut self, artnet_manager: &mut ArtnetManager) -> Result<(), ArtnetError> {
+    fn tick(&mut self, artnet_manager: &mut ArtnetManager) -> Result<(), Report<ArtnetError>> {
         if self.state.is_none() {
             let state = self.initialize_state(artnet_manager)?;
 
@@ -315,15 +323,15 @@ impl DmxChannelDelta {
 
     pub fn tick(&mut self) {
         if self.is_increment {
-            self.value += self.delta;
+            self.value = self.value.saturating_add(self.delta);
             if self.fraction >= 0 {
-                self.value += 1;
+                self.value = self.value.saturating_add(1);
                 self.fraction -= self.dx as i32;
             }
         } else {
-            self.value -= self.delta;
+            self.value = self.value.saturating_sub(self.delta);
             if self.fraction >= 0 {
-                self.value -= 1;
+                self.value = self.value.saturating_sub(1);
                 self.fraction -= self.dx as i32;
             }
         }
@@ -340,7 +348,7 @@ impl FadeEffectNode {
     fn initialize_state(
         &self,
         artnet_manager: &mut ArtnetManager,
-    ) -> Result<FadeEffectState, ArtnetError> {
+    ) -> Result<FadeEffectState, Report<ArtnetError>> {
         let mut universe_states = Vec::<FadeEffectUniverseState>::new();
 
         for universe in self.lights.iter() {
@@ -357,7 +365,7 @@ impl FadeEffectNode {
         &self,
         artnet_manager: &mut ArtnetManager,
         universe: &UniverseChannelDefinitions,
-    ) -> Result<Vec<FadeEffectChannelState>, ArtnetError> {
+    ) -> Result<Vec<FadeEffectChannelState>, Report<ArtnetError>> {
         let mut channel_states = Vec::<FadeEffectChannelState>::new();
 
         for channel in universe.channels.iter() {
@@ -376,7 +384,7 @@ impl FadeEffectNode {
         artnet_manager: &mut ArtnetManager,
         universe_id: &str,
         channel_definition: &ChannelDefinition,
-    ) -> Result<Option<FadeEffectChannelState>, ArtnetError> {
+    ) -> Result<Option<FadeEffectChannelState>, Report<ArtnetError>> {
         Ok(
             match artnet_manager
                 .get_channel(universe_id, channel_definition)?

@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use error_stack::Result;
+use error_stack::Report;
 
 use crate::defs::SymbolTable;
 
@@ -13,7 +13,7 @@ impl ArrayManager {
         array_id: Arc<str>,
         value_name: Arc<str>,
         value: &str,
-    ) -> Result<(), DmxArrayError> {
+    ) -> Result<(), Report<DmxArrayError>> {
         let array_values = self
             .values
             .entry(array_id)
@@ -27,14 +27,14 @@ impl ArrayManager {
         &mut self,
         array_id: Arc<str>,
         symbol_table: SymbolTable,
-    ) -> Result<(), DmxArrayError> {
+    ) -> Result<(), Report<DmxArrayError>> {
         for (value_name, value) in symbol_table {
             self.set_array_value(array_id.clone(), value_name, &value)?;
         }
         Ok(())
     }
 
-    pub(super) fn set_global_value(&mut self, value_name: Arc<str>, value: &str) -> Result<(), DmxArrayError> {
+    pub(super) fn set_global_value(&mut self, value_name: Arc<str>, value: &str) -> Result<(), Report<DmxArrayError>> {
         self.global_values.insert(value_name, value.to_string());
         Ok(())
     }
@@ -42,7 +42,7 @@ impl ArrayManager {
     pub(super) fn remove_global_value(
         &mut self,
         value_name: &str,
-    ) -> Result<(), DmxArrayError> {
+    ) -> Result<(), Report<DmxArrayError>> {
         self.global_values.remove(value_name);
         Ok(())
     }
@@ -51,7 +51,7 @@ impl ArrayManager {
         &self,
         array_id: Arc<str>,
         value_name: &str,
-    ) -> Result<Option<String>, DmxArrayError> {
+    ) -> Result<Option<String>, Report<DmxArrayError>> {
         if !self.arrays.contains_key(&array_id) {
             return Err(DmxArrayError::ArrayNotFound(array_id).into());
         }
@@ -69,7 +69,7 @@ impl ArrayManager {
         &self,
         array_id: Arc<str>,
         unexpanded_value: &str,
-    ) -> Result<String, DmxArrayError> {
+    ) -> Result<String, Report<DmxArrayError>> {
         let mut value = unexpanded_value;
         let mut result = String::new();
         let index = 0;
@@ -124,7 +124,7 @@ impl crate::defs::NumberOrVariable {
         &self,
         scope: &Scope,
         description: &'static str,
-    ) -> Result<usize, DmxArrayError> {
+    ) -> Result<usize, Report<DmxArrayError>> {
         match self {
             crate::defs::NumberOrVariable::Number(n) => Ok(*n),
             crate::defs::NumberOrVariable::Variable(s) => {

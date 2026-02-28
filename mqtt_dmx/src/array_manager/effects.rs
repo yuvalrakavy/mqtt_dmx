@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use error_stack::Result;
+use error_stack::Report;
 
 use crate::defs::{self, DimmingAmount};
 use crate::defs::{EffectNodeDefinition, EffectUsage};
@@ -12,7 +12,7 @@ impl defs::EffectNodeDefinition {
     pub fn get_runtime_node(
         &self,
         scope: &Scope,
-    ) -> Result<Box<dyn EffectNodeRuntime>, DmxArrayError> {
+    ) -> Result<Box<dyn EffectNodeRuntime>, Report<DmxArrayError>> {
         match self {
             defs::EffectNodeDefinition::Sequence(node) => node.get_runtime_node(scope),
             defs::EffectNodeDefinition::Parallel(node) => node.get_runtime_node(scope),
@@ -23,12 +23,12 @@ impl defs::EffectNodeDefinition {
 }
 
 impl ArrayManager {
-    pub(super) fn add_effect(&mut self, effect_id: Arc<str>, effect: EffectNodeDefinition) -> Result<(), DmxArrayError> {
+    pub(super) fn add_effect(&mut self, effect_id: Arc<str>, effect: EffectNodeDefinition) -> Result<(), Report<DmxArrayError>> {
         self.effects.insert(effect_id, effect);
         Ok(())
     }
 
-    pub(super) fn remove_effect(&mut self, effect_id: &str) -> Result<(), DmxArrayError> {
+    pub(super) fn remove_effect(&mut self, effect_id: &str) -> Result<(), Report<DmxArrayError>> {
         self.effects.remove(effect_id);
         Ok(())
     }
@@ -41,7 +41,7 @@ impl ArrayManager {
         &self,
         array_id: &str,
         effect_id: &str,
-    ) -> Result<Option<&EffectNodeDefinition>, DmxArrayError> {
+    ) -> Result<Option<&EffectNodeDefinition>, Report<DmxArrayError>> {
         let array = self.get_array(array_id)?;
         Ok(array
             .effects
@@ -54,7 +54,7 @@ impl ArrayManager {
         usage: &EffectUsage,
         array_id: &str,
         effect_id: Option<&Arc<str>>
-    ) -> Result<Arc<str>, DmxArrayError> {
+    ) -> Result<Arc<str>, Report<DmxArrayError>> {
         if let Some(effect_id) = effect_id {
             Ok(effect_id.clone())
         } else {
@@ -73,7 +73,7 @@ impl ArrayManager {
         usage: &EffectUsage,
         array_id: &str,
         effect_id: Option<&Arc<str>>,
-    ) -> Result<&EffectNodeDefinition, DmxArrayError> {
+    ) -> Result<&EffectNodeDefinition, Report<DmxArrayError>> {
         let effect_id = self.get_usage_effect_id(usage, array_id, effect_id)?;
         let array = self.get_array(array_id)?;
 
@@ -100,7 +100,7 @@ impl ArrayManager {
         array_id: &str,
         effect_id: Option<&Arc<str>>,
         dimming_amount: DimmingAmount,
-    ) -> Result<Box<dyn EffectNodeRuntime>, DmxArrayError> {
+    ) -> Result<Box<dyn EffectNodeRuntime>, Report<DmxArrayError>> {
         let effect_definition = self.get_usage_effect_definition(usage, array_id, effect_id)?;
         let scope = super::Scope::new(self, Arc::from(array_id), effect_id, dimming_amount)?;
 

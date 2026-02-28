@@ -1,4 +1,4 @@
-use error_stack::{ResultExt, Result};
+use error_stack::{ResultExt, Report};
 use async_channel::Receiver;
 use rumqttc::AsyncClient;
 use serde::Serialize;
@@ -12,7 +12,7 @@ struct MqttErrorMessageBody {
     message: String,
 }
 
-pub async fn session(mqtt_client: AsyncClient, to_mqtt_publisher_rx: Receiver<ToMqttPublisherMessage>) -> Result<(), MqttError> {
+pub async fn session(mqtt_client: AsyncClient, to_mqtt_publisher_rx: Receiver<ToMqttPublisherMessage>) -> Result<(), Report<MqttError>> {
     info!("Starting MQTT publisher session");
     let into_context = || MqttError::Context("In MQTT publisher session".to_string());
 
@@ -47,10 +47,10 @@ mod test {
         mqtt_options.set_keep_alive(Duration::from_secs(5));
         let (mqtt_client, mut event_loop) = AsyncClient::new(mqtt_options, 10);
 
-        let (to_mqtt_publisher_tx, to_mqtt_publisher_rx) = tokio::sync::mpsc::channel::<ToMqttPublisherMessage>(10);
+        let (to_mqtt_publisher_tx, to_mqtt_publisher_rx) = async_channel::bounded::<ToMqttPublisherMessage>(10);
 
-        let _ = tokio::spawn(async move {
-            session(mqtt_client, to_mqtt_publisher_rx).await;
+        tokio::spawn(async move {
+            let _ = session(mqtt_client, to_mqtt_publisher_rx).await;
         });
 
         to_mqtt_publisher_tx.send(ToMqttPublisherMessage::Error("Test error".to_string())).await.unwrap();

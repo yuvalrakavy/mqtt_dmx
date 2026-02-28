@@ -33,6 +33,7 @@ pub const DIMMING_AMOUNT_MAX: DimmingAmount = 1000;
 pub type SymbolTable = HashMap<Arc<str>, String>;
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct DmxArray {
     pub description: String,
     
@@ -91,7 +92,7 @@ impl FromStr for EffectUsage {
             "On" => Ok(EffectUsage::On),
             "Off" => Ok(EffectUsage::Off),
             "Dim" => Ok(EffectUsage::Dim),
-            _ => panic!("Invalid effect usage: {}", s),
+            _ => Err(format!("Invalid effect usage: {}", s)),
         }
     }
 }

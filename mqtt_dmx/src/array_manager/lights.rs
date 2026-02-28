@@ -1,7 +1,7 @@
 
 use std::collections::HashMap;
 use std::fmt::Display;
-use error_stack::Result;
+use error_stack::Report;
 
 use super::manager::ArrayManager;
 use super::error::DmxArrayError;
@@ -92,7 +92,7 @@ impl ArrayManager {
     //      }
     //  ]
     //      
-    pub (super) fn static_do_get_array_light_channels(array_id: &str, array: &DmxArray, lights_list: &str, result: &mut HashMap<String, UniverseChannelDefinitions>, stack: &mut ExpansionStack) -> Result<(), DmxArrayError> {
+    pub (super) fn static_do_get_array_light_channels(array_id: &str, array: &DmxArray, lights_list: &str, result: &mut HashMap<String, UniverseChannelDefinitions>, stack: &mut ExpansionStack) -> Result<(), Report<DmxArrayError>> {
         let mut universe_id = array.universe_id.as_str();
         
         for entry in lights_list.split(',').map(|s| s.trim()) {
@@ -123,7 +123,7 @@ impl ArrayManager {
         Ok(())
     }
 
-    pub (super) fn static_get_array_light_channels(array_id: &str, array: &DmxArray, lights_list: &str) -> Result<Vec<UniverseChannelDefinitions>, DmxArrayError> {
+    pub (super) fn static_get_array_light_channels(array_id: &str, array: &DmxArray, lights_list: &str) -> Result<Vec<UniverseChannelDefinitions>, Report<DmxArrayError>> {
         let mut result = HashMap::<String, UniverseChannelDefinitions>::new();
         let mut stack = ExpansionStack::new();
 
@@ -134,7 +134,7 @@ impl ArrayManager {
         Ok(result.into_values().collect())
     }
 
-    pub fn get_array_light_channels(&self, array_id: &str, lights_list: &str) -> Result<Vec<UniverseChannelDefinitions>, DmxArrayError> {
+    pub fn get_array_light_channels(&self, array_id: &str, lights_list: &str) -> Result<Vec<UniverseChannelDefinitions>, Report<DmxArrayError>> {
         let array = self.get_array(array_id)?;
         Self::static_get_array_light_channels(array_id, array, lights_list)
     }

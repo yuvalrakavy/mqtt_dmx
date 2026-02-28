@@ -436,7 +436,7 @@ fn test_expand_values() {
     assert_eq!(result, "hello default world");
 
     let scope = Scope::new(
-        &&array_manager,
+        &array_manager,
         array_id.clone(),
         None,
         DIMMING_AMOUNT_MAX,

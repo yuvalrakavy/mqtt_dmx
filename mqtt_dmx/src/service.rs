@@ -1,4 +1,4 @@
-use error_stack::{Result, ResultExt};
+use error_stack::{Report, ResultExt};
 use log::info;
 use rumqttc::{AsyncClient, EventLoop, LastWill, MqttOptions, QoS};
 use std::{marker::PhantomData, sync::Arc};
@@ -24,7 +24,7 @@ pub struct ServiceConfig {
 
 pub struct Service<Status = Stopped> {
     config: ServiceConfig,
-
+    cancel: Option<CancellationToken>,
     workers: JoinSet<()>,
     _status: PhantomData<Status>,
 }
@@ -54,12 +54,16 @@ pub enum MqttError {
 
     #[error("Invalid command: '{0}' (topic should be DMX/Command/[On, Off, Stop])")]
     InvalidCommand(String),
+
+    #[error("Internal channel closed")]
+    ChannelClosed,
 }
 
 impl Service {
     pub fn new(config: ServiceConfig) -> Service<Stopped> {
         Service {
             config,
+            cancel: None,
             workers: JoinSet::new(),
             _status: PhantomData,
         }
@@ -67,7 +71,7 @@ impl Service {
 
     async fn connect_to_mqtt_broker(
         mqtt_broker: &str,
-    ) -> Result<(AsyncClient, EventLoop), MqttError> {
+    ) -> Result<(AsyncClient, EventLoop), Report<MqttError>> {
         let into_context =
             || MqttError::Context(format!("Connecting to MQTT broker {mqtt_broker}"));
         let mut mqtt_options = MqttOptions::new("DMX", mqtt_broker, 1883);
@@ -109,7 +113,7 @@ impl Service {
         to_array_tx: Sender<messages::ToArrayManagerMessage>,
         to_mqtt_publisher_rx: async_channel::Receiver<messages::ToMqttPublisherMessage>,
         to_mqtt_publisher_tx: async_channel::Sender<messages::ToMqttPublisherMessage>,
-    ) -> Result<(), MqttError> {
+    ) -> Result<(), Report<MqttError>> {
         let mut mqtt_workers = JoinSet::new();
 
         let (mqtt_client, mqtt_event_loop) =
@@ -209,6 +213,7 @@ impl Service<Stopped> {
         info!("Service started");
         Service {
             config: self.config,
+            cancel: Some(cancel),
             workers: self.workers,
             _status: PhantomData,
         }
@@ -217,11 +222,15 @@ impl Service<Stopped> {
 
 impl Service<Started> {
     pub async fn stop(mut self) -> Service<Stopped> {
+        if let Some(cancel) = self.cancel.take() {
+            cancel.cancel();
+        }
         self.workers.shutdown().await;
         info!("Service stopped");
 
         Service {
             config: self.config,
+            cancel: None,
             workers: self.workers,
             _status: PhantomData,
         }

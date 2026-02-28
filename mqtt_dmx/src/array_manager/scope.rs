@@ -1,6 +1,6 @@
 
 use std::sync::Arc;
-use error_stack::Result;
+use error_stack::Report;
 
 use super::manager::ArrayManager;
 use super::DmxArrayError;
@@ -30,7 +30,7 @@ impl std::fmt::Display for Scope<'_> {
 }
 
 impl Scope<'_> {
-    pub fn new<'a>(array_manager: &'a ArrayManager, array_id: Arc<str>, effect_id: Option<&Arc<str>>, dimming_amount: DimmingAmount) -> Result<Scope<'a>, DmxArrayError> {
+    pub fn new<'a>(array_manager: &'a ArrayManager, array_id: Arc<str>, effect_id: Option<&Arc<str>>, dimming_amount: DimmingAmount) -> Result<Scope<'a>, Report<DmxArrayError>> {
         let array = array_manager.arrays.get(&array_id);
 
         if array.is_none() {
@@ -45,11 +45,11 @@ impl Scope<'_> {
         })
     }
 
-    pub fn get_light_channels(&self, lights_list: &str) -> Result<Vec<UniverseChannelDefinitions>, DmxArrayError> {
+    pub fn get_light_channels(&self, lights_list: &str) -> Result<Vec<UniverseChannelDefinitions>, Report<DmxArrayError>> {
         self.array_manager.get_array_light_channels(&self.array_id, lights_list)
     }
 
-    pub fn expand_values(&self, unexpanded_value: &str) -> Result<String, DmxArrayError> {
+    pub fn expand_values(&self, unexpanded_value: &str) -> Result<String, Report<DmxArrayError>> {
         self.array_manager.expand_values(self.array_id.clone(), unexpanded_value)
     }
 }
