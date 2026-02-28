@@ -39,14 +39,14 @@ pub async fn session(
     let into_context = || MqttError::Context("In MQTT subscriber session".to_string());
 
     let mut mqtt_subscriber = MqttSubscriber {
+        universes: persistence.load_universes(),
+        arrays: persistence.load_arrays(),
+        effects: persistence.load_effects(),
+        values: persistence.load_values(),
         to_artnet_tx,
         to_array_tx,
         to_mqtt_publisher_tx,
         persistence,
-        universes: HashMap::new(),
-        arrays: HashMap::new(),
-        effects: HashMap::new(),
-        values: HashMap::new(),
     };
 
     loop {

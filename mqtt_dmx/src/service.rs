@@ -218,6 +218,15 @@ impl Service<Stopped> {
         let persisted_effects = persistence.load_effects();
         let persisted_values = persistence.load_values();
 
+        info!(
+            "Loaded persisted configuration from {}: {} universes, {} arrays, {} effects, {} values",
+            self.config.storage_path.display(),
+            persisted_universes.len(),
+            persisted_arrays.len(),
+            persisted_effects.len(),
+            persisted_values.len(),
+        );
+
         for (universe_id, definition) in persisted_universes {
             let (tx, rx) = tokio::sync::oneshot::channel();
             if to_artnet_tx_replay
@@ -285,11 +294,6 @@ impl Service<Stopped> {
                 }
             }
         }
-
-        info!(
-            "Persisted configuration loaded from {}",
-            self.config.storage_path.display()
-        );
 
         let broker_address = self.config.mqtt_broker_address.clone();
 

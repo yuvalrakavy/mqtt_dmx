@@ -50,10 +50,15 @@ impl Persistence {
 
     fn save_file<T: Serialize>(&self, filename: &str, data: &HashMap<Arc<str>, T>) {
         let path = self.file_path(filename);
+        let tmp_path = self.file_path(&format!(".{}.tmp", filename));
         match serde_json::to_string_pretty(data) {
             Ok(json) => {
-                if let Err(e) = fs::write(&path, json) {
-                    error!("Failed to write {}: {}", path.display(), e);
+                if let Err(e) = fs::write(&tmp_path, &json) {
+                    error!("Failed to write {}: {}", tmp_path.display(), e);
+                    return;
+                }
+                if let Err(e) = fs::rename(&tmp_path, &path) {
+                    error!("Failed to rename {} to {}: {}", tmp_path.display(), path.display(), e);
                 }
             }
             Err(e) => {
