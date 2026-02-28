@@ -8,6 +8,7 @@ mod artnet_manager;
 mod array_manager;
 //mod effects_manager;
 mod messages;
+mod persistence;
 
 use log::info;
 use rustop::opts;
