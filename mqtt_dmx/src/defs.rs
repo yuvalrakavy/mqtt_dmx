@@ -1,11 +1,11 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::str::FromStr;
 use std::sync::Arc;
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UniverseDefinition {
     pub description: String,
 
@@ -22,7 +22,7 @@ pub struct UniverseDefinition {
     pub disable_send: bool,     // Disable sending DMX packets for testing
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ValueDefinition {
     pub value: Arc<str>,
 }
@@ -32,7 +32,7 @@ pub const DIMMING_AMOUNT_MAX: DimmingAmount = 1000;
 
 pub type SymbolTable = HashMap<Arc<str>, String>;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[allow(dead_code)]
 pub struct DmxArray {
     pub description: String,
@@ -63,14 +63,14 @@ fn default_dim_effect_id() -> Arc<str> {
     Arc::from("dim")
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct TargetValue {
     pub single: Option<u8>,
     pub rgb: Option<(u8, u8, u8)>,
     pub tri_white: Option<(u8, u8, u8)>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(untagged)]
 pub enum NumberOrVariable {
     Number(usize),
@@ -98,7 +98,7 @@ impl FromStr for EffectUsage {
 }
 /// Effect modes
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub enum EffectNodeDefinition {
@@ -108,22 +108,22 @@ pub enum EffectNodeDefinition {
     Fade(FadeEffectNodeDefinition),
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SequenceEffectNodeDefinition {
     pub nodes: Vec<EffectNodeDefinition>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ParallelEffectNodeDefinition {
     pub nodes: Vec<EffectNodeDefinition>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DelayEffectNodeDefinition {
     pub ticks: NumberOrVariable,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FadeEffectNodeDefinition {
     pub lights: String,
     pub ticks: NumberOrVariable,
