@@ -1,4 +1,4 @@
-use log::{info, debug, trace};
+use tracing::{info, debug, trace};
 use error_stack::{Report, ResultExt};
 use std::{
     collections::HashMap,

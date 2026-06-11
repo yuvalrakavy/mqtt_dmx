@@ -1,4 +1,4 @@
-use log::{error, info};
+use tracing::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -33,7 +33,10 @@ impl Persistence {
                     data
                 }
                 Err(e) => {
-                    error!("Failed to parse {}: {}", path.display(), e);
+                    // Corrupt or schema-mismatched persisted file — log at ERROR
+                    // (the file format is ours; a parse failure warrants investigation).
+                    error!(kind = "decode_error", path = %path.display(), error = %e,
+                           "failed to parse persisted config file");
                     HashMap::new()
                 }
             },
@@ -42,7 +45,8 @@ impl Persistence {
                 HashMap::new()
             }
             Err(e) => {
-                error!("Failed to read {}: {}", path.display(), e);
+                warn!(kind = "external_failure", path = %path.display(), error = %e,
+                      "failed to read persisted config file");
                 HashMap::new()
             }
         }
@@ -54,15 +58,19 @@ impl Persistence {
         match serde_json::to_string_pretty(data) {
             Ok(json) => {
                 if let Err(e) = fs::write(&tmp_path, &json) {
-                    error!("Failed to write {}: {}", tmp_path.display(), e);
+                    warn!(kind = "external_failure", path = %tmp_path.display(), error = %e,
+                          "failed to write config to temp file");
                     return;
                 }
                 if let Err(e) = fs::rename(&tmp_path, &path) {
-                    error!("Failed to rename {} to {}: {}", tmp_path.display(), path.display(), e);
+                    warn!(kind = "external_failure", from = %tmp_path.display(),
+                          to = %path.display(), error = %e,
+                          "failed to rename temp config file");
                 }
             }
             Err(e) => {
-                error!("Failed to serialize {}: {}", path.display(), e);
+                warn!(kind = "external_failure", path = %path.display(), error = %e,
+                      "failed to serialize config for persistence");
             }
         }
     }

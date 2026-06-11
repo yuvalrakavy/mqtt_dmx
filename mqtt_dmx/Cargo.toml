@@ -17,9 +17,10 @@ serde = { version = "1.0.228", features = ["derive", "rc"] }
 rumqttc = { version = "0.25.1", default-features = false }
 rustop = "1.1.4"
 log = "0.4.29"
+tracing = "0.1"
 chrono = { version = "0.4.44", features = ["serde"] }
 bytes = "1.11.1"
-tracing-init = { git="http://github.com/yuvalrakavy/tracing-init.git" }
+tracing-init = { git="http://github.com/yuvalrakavy/tracing-init.git", features = ["otel"] }
 built = "0.8.0" 
 
 [build-dependencies]

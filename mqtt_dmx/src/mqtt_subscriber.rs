@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use log::{error, info};
-use rumqttc::{EventLoop, Packet};
+use tracing::{error, info, info_span, Instrument};
+use rumqttc::v5::{EventLoop, Event, mqttbytes::v5::Packet};
 use tokio::sync::{mpsc::Sender, oneshot};
 
 use crate::{
@@ -52,18 +52,39 @@ pub async fn session(
     loop {
         let event = event_loop.poll().await.change_context_lazy(into_context)?;
 
-        if let rumqttc::Event::Incoming(Packet::Publish(publish_packet)) = event {
-            let topic = publish_packet.topic;
-            let payload = publish_packet.payload;
+        if let Event::Incoming(Packet::Publish(publish)) = event {
+            let topic = String::from_utf8_lossy(&publish.topic).into_owned();
+            let payload = publish.payload.clone();
 
-            if let Err(e) = mqtt_subscriber.handle_message(&topic, &payload).await {
-                error!("Error while handling MQTT message: {:?}", e);
-                mqtt_subscriber
-                    .to_mqtt_publisher_tx
-                    .send(messages::ToMqttPublisherMessage::Error(e.to_string()))
-                    .await
-                    .change_context_lazy(into_context)?;
+            // Extract traceparent from MQTT 5 user properties
+            let traceparent = publish.properties.as_ref().and_then(|p| {
+                p.user_properties
+                    .iter()
+                    .find(|(k, _)| k == "traceparent")
+                    .map(|(_, v)| v.clone())
+            });
+
+            let span = info_span!("mqtt_command", topic = %topic);
+            if let Some(tp) = traceparent {
+                tracing_init::traceparent::set_remote_parent(&span, &tp);
             }
+
+            let result = async {
+                if let Err(e) = mqtt_subscriber.handle_message(&topic, &payload).await {
+                    error!(kind = "decode_error", topic = %topic, error = %e,
+                           "MQTT message handling failed");
+                    mqtt_subscriber
+                        .to_mqtt_publisher_tx
+                        .send(messages::ToMqttPublisherMessage::Error(e.to_string()))
+                        .await
+                        .change_context_lazy(into_context)?;
+                }
+                Ok::<(), Report<MqttError>>(())
+            }
+            .instrument(span)
+            .await;
+
+            result?;
         }
     }
 }

@@ -12,7 +12,7 @@ mod persistence;
 
 use std::path::PathBuf;
 
-use log::info;
+use tracing::info;
 use rustop::opts;
 use service::ServiceConfig;
 
@@ -33,9 +33,9 @@ async fn main() {
 
     let d = tracing_init::TracingInit::builder("mqtt_dmx")
         .log_to_file(true)
-        .log_to_server(true)
-        .log_file_prefix("dmx")
-        .log_file_path("logs")
+        .log_to_gelf_server(true)
+        .file_prefix("dmx")
+        .file_path("logs")
         .init().map(|t| format!("{t}")).unwrap();
 
     println!("Logging: {}", d);

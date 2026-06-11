@@ -1,8 +1,8 @@
 use error_stack::{ResultExt, Report};
 use async_channel::Receiver;
-use rumqttc::AsyncClient;
+use rumqttc::v5::{AsyncClient, mqttbytes::QoS, mqttbytes::v5::PublishProperties};
 use serde::Serialize;
-use log::{error, info};
+use tracing::{info, warn};
 
 use crate::{messages::ToMqttPublisherMessage, service::MqttError};
 
@@ -10,6 +10,17 @@ use crate::{messages::ToMqttPublisherMessage, service::MqttError};
 struct MqttErrorMessageBody {
     time: String,
     message: String,
+}
+
+/// Build publish properties, injecting the current traceparent if an active trace exists.
+fn build_publish_properties() -> Option<PublishProperties> {
+    if let Some(tp) = tracing_init::traceparent::current() {
+        let mut props = PublishProperties::default();
+        props.user_properties.push(("traceparent".to_string(), tp));
+        Some(props)
+    } else {
+        None
+    }
 }
 
 pub async fn session(mqtt_client: AsyncClient, to_mqtt_publisher_rx: Receiver<ToMqttPublisherMessage>) -> Result<(), Report<MqttError>> {
@@ -24,12 +35,18 @@ pub async fn session(mqtt_client: AsyncClient, to_mqtt_publisher_rx: Receiver<To
                     message: error,
                 };
 
-                error!("Error: {:?}", error_message_body);
+                warn!(kind = "external_failure", error = ?error_message_body,
+                      "MQTT DMX command error reported");
 
                 let error_message_body = serde_json::to_vec(&error_message_body).change_context_lazy(into_context)?;
 
-                mqtt_client.publish("DMX/LastError", rumqttc::QoS::AtLeastOnce, true, error_message_body.clone()).await.change_context_lazy(into_context)?;
-                mqtt_client.publish("DMX/Error", rumqttc::QoS::AtLeastOnce, false, error_message_body).await.change_context_lazy(into_context)?;
+                if let Some(props) = build_publish_properties() {
+                    mqtt_client.publish_with_properties("DMX/LastError", QoS::AtLeastOnce, true, error_message_body.clone(), props.clone()).await.change_context_lazy(into_context)?;
+                    mqtt_client.publish_with_properties("DMX/Error", QoS::AtLeastOnce, false, error_message_body, props).await.change_context_lazy(into_context)?;
+                } else {
+                    mqtt_client.publish("DMX/LastError", QoS::AtLeastOnce, true, error_message_body.clone()).await.change_context_lazy(into_context)?;
+                    mqtt_client.publish("DMX/Error", QoS::AtLeastOnce, false, error_message_body).await.change_context_lazy(into_context)?;
+                }
             }
         }
     }
@@ -38,8 +55,8 @@ pub async fn session(mqtt_client: AsyncClient, to_mqtt_publisher_rx: Receiver<To
 #[cfg(test)]
 mod test {
     use super::*;
+    use rumqttc::v5::MqttOptions;
     use tokio::time::{sleep, Duration};
-    use rumqttc::{AsyncClient, MqttOptions};
 
     #[tokio::test]
     async fn test_mqtt_publisher() {

@@ -1,6 +1,6 @@
 use error_stack::{Report, ResultExt};
-use log::{error, info};
-use rumqttc::{AsyncClient, EventLoop, LastWill, MqttOptions, QoS};
+use tracing::{error, info, warn};
+use rumqttc::v5::{AsyncClient, EventLoop, MqttOptions, mqttbytes::QoS, mqttbytes::v5::{LastWill, PublishProperties}};
 use std::{marker::PhantomData, path::PathBuf, sync::Arc};
 use thiserror::Error;
 use tokio::sync::mpsc::Sender;
@@ -79,27 +79,43 @@ impl Service {
         let mut mqtt_options = MqttOptions::new("DMX", mqtt_broker, 1883);
         let last_will_topic = "DMX/Active".to_string();
         let version_topic = "DMX/Version".to_string();
-        let last_will = LastWill::new(&last_will_topic, "false".as_bytes(), QoS::AtLeastOnce, true);
+        let last_will = LastWill::new(&last_will_topic, "false", QoS::AtLeastOnce, true, None);
         mqtt_options
             .set_keep_alive(Duration::from_secs(5))
             .set_last_will(last_will);
 
         let (mqtt_client, event_loop) = AsyncClient::new(mqtt_options, 10);
 
+        // Build publish properties with current traceparent if a trace is active
+        let props: Option<PublishProperties> = tracing_init::traceparent::current().map(|tp| {
+            let mut p = PublishProperties::default();
+            p.user_properties.push(("traceparent".to_string(), tp));
+            p
+        });
+
         // Publish active state
-        mqtt_client
-            .publish(&last_will_topic, QoS::AtLeastOnce, true, "true".as_bytes())
-            .await
-            .change_context_lazy(into_context)?;
-        mqtt_client
-            .publish(
-                &version_topic,
-                QoS::AtLeastOnce,
-                true,
-                get_version().as_bytes(),
-            )
-            .await
-            .change_context_lazy(into_context)?;
+        if let Some(p) = props.clone() {
+            mqtt_client
+                .publish_with_properties(&last_will_topic, QoS::AtLeastOnce, true, "true", p)
+                .await
+                .change_context_lazy(into_context)?;
+        } else {
+            mqtt_client
+                .publish(&last_will_topic, QoS::AtLeastOnce, true, "true")
+                .await
+                .change_context_lazy(into_context)?;
+        }
+        if let Some(p) = props {
+            mqtt_client
+                .publish_with_properties(&version_topic, QoS::AtLeastOnce, true, get_version(), p)
+                .await
+                .change_context_lazy(into_context)?;
+        } else {
+            mqtt_client
+                .publish(&version_topic, QoS::AtLeastOnce, true, get_version())
+                .await
+                .change_context_lazy(into_context)?;
+        }
 
         // Subscribe to commands
         mqtt_client
@@ -164,7 +180,7 @@ impl Service {
                 )
                 .await;
 
-            info!("MQTT session ended, restarting in 10 seconds");
+            info!(kind = "connection_lost", "MQTT session ended, restarting in 10 seconds");
             tokio::time::sleep(Duration::from_secs(10)).await;
         }
     }
@@ -205,7 +221,8 @@ impl Service<Stopped> {
 
         let persistence = Arc::new(Persistence::new(self.config.storage_path.clone()));
         if let Err(e) = persistence.ensure_directory() {
-            error!("Failed to create storage directory: {}", e);
+            warn!(kind = "external_failure", path = %self.config.storage_path.display(),
+                  error = %e, "failed to create storage directory");
         }
 
         // Clone channel senders for replaying persisted state
@@ -239,7 +256,8 @@ impl Service<Stopped> {
                 .is_ok()
             {
                 if let Ok(Err(e)) = rx.await {
-                    error!("Failed to restore universe {}: {:?}", universe_id, e);
+                    error!(kind = "decode_error", universe_id = %universe_id, error = ?e,
+                           "failed to restore persisted universe");
                 }
             }
         }
@@ -256,7 +274,8 @@ impl Service<Stopped> {
                 .is_ok()
             {
                 if let Ok(Err(e)) = rx.await {
-                    error!("Failed to restore array {}: {:?}", array_id, e);
+                    error!(kind = "decode_error", array_id = %array_id, error = ?e,
+                           "failed to restore persisted array");
                 }
             }
         }
@@ -273,7 +292,8 @@ impl Service<Stopped> {
                 .is_ok()
             {
                 if let Ok(Err(e)) = rx.await {
-                    error!("Failed to restore effect {}: {:?}", effect_id, e);
+                    error!(kind = "decode_error", effect_id = %effect_id, error = ?e,
+                           "failed to restore persisted effect");
                 }
             }
         }
@@ -290,7 +310,8 @@ impl Service<Stopped> {
                 .is_ok()
             {
                 if let Ok(Err(e)) = rx.await {
-                    error!("Failed to restore value {}: {:?}", value_name, e);
+                    error!(kind = "decode_error", value_name = %value_name, error = ?e,
+                           "failed to restore persisted value");
                 }
             }
         }
