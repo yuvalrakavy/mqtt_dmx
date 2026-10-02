@@ -10,7 +10,7 @@ use std::time::Duration;
 use mqtt_test_broker::FakeBroker;
 
 use super::{broker_host_port, Service, ServiceConfig, Started};
-use crate::persistence::Persistence;
+use crate::persistence::{read_config, Persistence};
 
 fn storage(tag: &str) -> PathBuf {
     std::env::temp_dir().join(format!("mqtt-dmx-{tag}-{}", std::process::id()))
@@ -39,6 +39,54 @@ fn error_reports(broker: &FakeBroker) -> Vec<String> {
     broker.received_on("DMX/Error").iter().map(|r| String::from_utf8_lossy(&r.payload).into_owned()).collect()
 }
 
+/// The bridge says it is active only once it has subscribed (no-hang F4): an `Active=true` before
+/// the subscription is a bridge the Store takes as ready while its commands go nowhere. The broker
+/// holds its acks with room for one publish in flight, so it sees exactly what the bridge sends
+/// first, and nothing after it until the acks are released. Every connection also republishes the
+/// retained model from the bridge's state — its last error report included — for a broker that
+/// lost its retained messages.
+#[tokio::test(flavor = "multi_thread")]
+async fn active_goes_out_only_after_the_subscription() {
+    const REPORT: &str = r#"{"time":"then","message":"an earlier session's error"}"#;
+    let broker = FakeBroker::start_with_receive_max(1).await;
+    broker.hold_acks();
+    let (client, events) = Service::mqtt_client(&broker.address());
+    let (_pump, _incoming) = crate::mqtt_pump::Pump::start(events, std::sync::Arc::new(crate::mqtt_outage::Outage::new()));
+    let address = broker.address();
+    let last_error = crate::mqtt_publisher::LastError::default();
+    last_error.set(REPORT.as_bytes().to_vec());
+    let announce = tokio::spawn(async move { Service::announce(&client, &address, &last_error).await });
+    let test = async {
+        assert!(
+            broker.wait_until(Duration::from_secs(10), |b| !b.received().is_empty()).await,
+            "the bridge published nothing"
+        );
+        assert!(
+            broker.subscriptions().iter().any(|f| f == "DMX/#"),
+            "the bridge published {:?} before it subscribed",
+            broker.received().iter().map(|r| r.topic.clone()).collect::<Vec<_>>()
+        );
+        broker.release_acks();
+        assert!(
+            matches!(tokio::time::timeout(Duration::from_secs(10), announce).await, Ok(Ok(Ok(())))),
+            "the announcement did not complete once the broker acknowledged it"
+        );
+        // Queued is not delivered: the pump sends the rest as the acks come back.
+        assert!(
+            broker.wait_until(Duration::from_secs(10), |b| !b.received_on("DMX/Active").is_empty()).await,
+            "Active=true never arrived"
+        );
+        let topics: Vec<_> = broker.received().iter().map(|r| r.topic.clone()).collect();
+        assert_eq!(topics.last().map(String::as_str), Some("DMX/Active"), "Active=true was not the last of the announcement: {topics:?}");
+        let republished = broker.received_on("DMX/LastError");
+        assert!(
+            republished.len() == 1 && republished[0].retain && republished[0].payload == REPORT.as_bytes(),
+            "the connection did not republish the last error report, retained, from the bridge's state: {republished:?}"
+        );
+    };
+    tokio::time::timeout(Duration::from_secs(30), test).await.expect("the test itself ran out of time");
+}
+
 #[test]
 fn a_broker_address_may_carry_its_port() {
     assert_eq!(broker_host_port("control-tlv"), ("control-tlv", 1883));
@@ -48,7 +96,10 @@ fn a_broker_address_may_carry_its_port() {
 
 /// Stopping is bounded: a task that will not end — inside a synchronous call, where an abort cannot
 /// reach it — costs a WARN (`shutdown_timeout`), never a stop that waits on it (Store no-hang 3b
-/// review, C-7: SIGTERM now runs this stop, and systemd waits on it).
+/// review, C-7: SIGTERM now runs this stop, and systemd waits on it). This is the service's stop
+/// alone: the test's own runtime is shut down in the background, which proves nothing about the
+/// process. That the process then ends within a bound, with a thread stuck, is
+/// `tests/process.rs`'s `a_stalled_config_write_does_not_hold_up_the_stop` (re-review X1).
 #[test]
 fn stopping_is_bounded_when_a_task_will_not_end() {
     const BOUND: Duration = Duration::from_millis(300);
@@ -68,6 +119,8 @@ fn stopping_is_bounded_when_a_task_will_not_end() {
                 config: ServiceConfig { mqtt_broker_address: String::new(), storage_path: storage("stop") },
                 cancel: Some(tokio_util::sync::CancellationToken::new()),
                 workers,
+                persistence: None,
+                writer: None,
                 _status: std::marker::PhantomData,
             };
             let started = std::time::Instant::now();
@@ -81,6 +134,34 @@ fn stopping_is_bounded_when_a_task_will_not_end() {
         events.iter().any(|e| e.level == tracing::Level::WARN && e.kind() == Some("shutdown_timeout")),
         "stopping ran past its bound without a WARN: {events:#?}"
     );
+}
+
+/// A save is posted to the writer, which writes it later; a stop right after must still let it
+/// write what was saved, within the stop's bound, before it is aborted. The test's runtime runs
+/// one task at a time, so the writer has not run when the stop begins.
+#[tokio::test]
+async fn a_stop_writes_what_was_saved_before_it() {
+    let storage_path = storage("flush");
+    let _ = std::fs::remove_dir_all(&storage_path);
+    std::fs::create_dir_all(&storage_path).expect("create the storage directory");
+    let persistence = std::sync::Arc::new(Persistence::new(storage_path.clone()));
+    let writer = tokio::spawn(Persistence::write_saves(persistence.clone()));
+    let mut values = std::collections::HashMap::new();
+    values.insert(std::sync::Arc::<str>::from("Level"), "42".to_string());
+    persistence.save_values(&values);
+
+    let service = Service::<Started> {
+        config: ServiceConfig { mqtt_broker_address: String::new(), storage_path: storage_path.clone() },
+        cancel: Some(tokio_util::sync::CancellationToken::new()),
+        workers: tokio::task::JoinSet::new(),
+        persistence: Some(persistence),
+        writer: Some(writer),
+        _status: std::marker::PhantomData,
+    };
+    let _ = tokio::time::timeout(Duration::from_secs(10), service.stop_within(Duration::from_secs(5))).await;
+    let saved = read_config(&storage_path).values;
+    let _ = std::fs::remove_dir_all(&storage_path);
+    assert_eq!(saved.get("Level").map(String::as_str), Some("42"), "the stop dropped a save made before it");
 }
 
 /// A burst of commands the bridge cannot parse, while the broker withholds its acknowledgements:
@@ -143,7 +224,7 @@ async fn eventually(within: Duration, ready: impl Fn() -> bool) -> bool {
 }
 
 fn persisted_universe(tag: &str, id: &str) -> bool {
-    Persistence::new(storage(tag)).load_universes().contains_key(id)
+    read_config(&storage(tag)).universes.contains_key(id)
 }
 
 /// The ArtNet manager's error reports back up behind a stalled publisher — the broker withholds its
@@ -162,7 +243,7 @@ async fn commands_that_wait_on_artnet_complete_while_its_errors_back_up_behind_a
     let test = async {
         assert!(broker.send("DMX/Array/Ghost", GHOST_ARRAY));
         assert!(
-            eventually(Duration::from_secs(5), || Persistence::new(storage("artnet")).load_arrays().contains_key("Ghost")).await,
+            eventually(Duration::from_secs(5), || read_config(&storage("artnet")).arrays.contains_key("Ghost")).await,
             "the bridge never took the array"
         );
         broker.hold_acks();

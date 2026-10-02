@@ -2,6 +2,7 @@ use error_stack::{ResultExt, Report};
 use async_channel::Receiver;
 use rumqttc::v5::{AsyncClient, mqttbytes::QoS, mqttbytes::v5::PublishProperties};
 use serde::Serialize;
+use std::sync::{Arc, Mutex};
 use tracing::{info, warn};
 
 use crate::{messages::ToMqttPublisherMessage, service::MqttError};
@@ -23,7 +24,30 @@ fn build_publish_properties() -> Option<PublishProperties> {
     }
 }
 
-pub async fn session(mqtt_client: AsyncClient, to_mqtt_publisher_rx: Receiver<ToMqttPublisherMessage>) -> Result<(), Report<MqttError>> {
+/// The last error report, as published on `DMX/LastError` (retained). It outlives the sessions,
+/// so each new connection republishes it from the bridge's own state (no-hang F4): a broker that
+/// restarted without its retained messages, or a report a reconnect cut off, gets it again.
+#[derive(Default, Clone)]
+pub struct LastError(Arc<Mutex<Option<Vec<u8>>>>);
+
+impl LastError {
+    /// Held to read or set the report alone.
+    pub fn set(&self, report: Vec<u8>) {
+        // WAIT: last-error-lock
+        *self.0.lock().unwrap_or_else(|p| p.into_inner()) = Some(report);
+    }
+
+    pub fn get(&self) -> Option<Vec<u8>> {
+        // WAIT: last-error-lock
+        self.0.lock().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+}
+
+pub async fn session(
+    mqtt_client: AsyncClient,
+    to_mqtt_publisher_rx: Receiver<ToMqttPublisherMessage>,
+    last_error: LastError,
+) -> Result<(), Report<MqttError>> {
     info!("Starting MQTT publisher session");
     let into_context = || MqttError::Context("In MQTT publisher session".to_string());
 
@@ -40,6 +64,9 @@ pub async fn session(mqtt_client: AsyncClient, to_mqtt_publisher_rx: Receiver<To
                       "MQTT DMX command error reported");
 
                 let error_message_body = serde_json::to_vec(&error_message_body).change_context_lazy(into_context)?;
+                // The bridge's state first: the next connection republishes it, whether or not
+                // this publish gets out.
+                last_error.set(error_message_body.clone());
 
                 // Not the poller: these wait on rumqttc's request channel, which the pump drains
                 // (no-hang §14.3).
@@ -78,8 +105,10 @@ mod test {
 
         let (to_mqtt_publisher_tx, to_mqtt_publisher_rx) = async_channel::bounded::<ToMqttPublisherMessage>(10);
 
+        let last_error = LastError::default();
+        let recorded = last_error.clone();
         tokio::spawn(async move {
-            let _ = session(mqtt_client, to_mqtt_publisher_rx).await;
+            let _ = session(mqtt_client, to_mqtt_publisher_rx, last_error).await;
         });
 
         to_mqtt_publisher_tx.send(ToMqttPublisherMessage::Error("Test error".to_string())).await.unwrap();
@@ -106,5 +135,6 @@ mod test {
         let last = &broker.received_on("DMX/LastError")[0];
         assert!(last.retain, "DMX/LastError is not retained");
         assert!(String::from_utf8_lossy(&last.payload).contains("Test error"));
+        assert_eq!(recorded.get().as_deref(), Some(&last.payload[..]), "the report published is not the one kept for the next connection");
     }
 }

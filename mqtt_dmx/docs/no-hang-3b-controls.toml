@@ -163,28 +163,28 @@ guard       = "collision_declared"
 [[control]]
 name        = "an_outage_warns_at_every_attempt"
 file        = "src/mqtt_outage.rs"
-anchor      = '''        if down_for_ms >= WARN_AFTER.as_millis() as u64 && !self.warned.swap(true, Ordering::SeqCst)'''
-replacement = '''        if down_for_ms >= WARN_AFTER.as_millis() as u64'''
+anchor      = '''                if down_for_ms >= WARN_AFTER.as_millis() as u64 && !self.warned.swap(true, Ordering::SeqCst) {'''
+replacement = '''                if down_for_ms >= WARN_AFTER.as_millis() as u64 {'''
 target      = "command"
-argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "an_outage_is_info_per_attempt"]
-expect_text = "not one WARN for the long outage alone"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "an_outage_is_one_info_then_debug_attempts"]
+expect_text = "not one WARN for the outage"
 guard       = "outage_one_warn"
 
 [[control]]
 name        = "a_recovery_goes_unlogged"
 file        = "src/mqtt_outage.rs"
-anchor      = '''        if since != 0 {'''
-replacement = '''        if since != 0 && since == 0 {'''
+anchor      = '''        if since == 0 || since > connection.at {'''
+replacement = '''        if since == 0 || since > connection.at || connection.proven {'''
 target      = "command"
-argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "an_outage_is_info_per_attempt"]
-expect_text = "no INFO with each outage's length when it ended"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "an_outage_ends_when_a_connection_proves_itself"]
+expect_text = "not one INFO when the connection proved itself"
 guard       = "outage_recovery_info"
 
 [[control]]
 name        = "sigterm_goes_unhandled"
 file        = "src/main.rs"
-anchor      = '''        let signals = match (signal(SignalKind::terminate()), signal(SignalKind::interrupt())) {'''
-replacement = '''        let signals = match (signal(SignalKind::user_defined1()), signal(SignalKind::interrupt())) {'''
+anchor      = '''        let term = register("SIGTERM", SignalKind::terminate());'''
+replacement = '''        let term = register("SIGTERM", SignalKind::user_defined1());'''
 target      = "command"
 argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--test", "process", "--", "sigterm_stops_the_bridge_through_its_shutdown"]
 expect_text = "the bridge did not stop cleanly on SIGTERM"
@@ -193,8 +193,8 @@ guard       = "sigterm_stops"
 [[control]]
 name        = "the_stop_waits_on_a_stuck_task"
 file        = "src/service.rs"
-anchor      = '''        if tokio::time::timeout(bound, self.workers.shutdown()).await.is_err() {'''
-replacement = '''        if { self.workers.shutdown().await; bound.is_zero() } {'''
+anchor      = '''        if tokio::time::timeout(bound, stop).await.is_err() {'''
+replacement = '''        if { stop.await; bound.is_zero() } {'''
 target      = "command"
 argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "stopping_is_bounded_when_a_task_will_not_end"]
 expect_text = "for a task stuck in a synchronous call"
@@ -210,3 +210,140 @@ target      = "command"
 argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--test", "process", "--", "a_log_destination_that_cannot_start"]
 expect_text = "no log reached GELF"
 guard       = "log_destinations_skip"
+
+# --- Store 3b re-review, round 2: X1 (F1), X2 (F2), X3 (F3), F4 ---
+
+[[control]]
+name        = "the_runtime_is_dropped_unbounded"
+file        = "src/main.rs"
+anchor      = '''    runtime.shutdown_timeout(RUNTIME_DRAIN);'''
+replacement = '''    drop(runtime); // control: the dropped runtime waits for every stuck thread'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--test", "process", "--", "a_stalled_config_write_does_not_hold_up_the_stop"]
+expect_text = "of SIGTERM while a config write was stalled"
+guard       = "runtime_shutdown_bounded"
+
+[[control]]
+name        = "the_subscriber_writes_its_saves"
+file        = "src/persistence.rs"
+anchor      = '''            state.pending.insert(file, json);
+        }
+        self.wake.notify_one();'''
+replacement = '''            state.pending.insert(file, json.clone());
+        }
+        // control: the save written by its caller, on an async worker
+        let _ = write_file(&self.storage_path, file, &json);
+        self.wake.notify_one();'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--test", "process", "--", "a_stalled_config_write_holds_up_no_command"]
+expect_text = "the bridge took no command after a config write stalled"
+guard       = "saves_off_the_async_workers"
+
+[[control]]
+name        = "the_startup_read_is_unbounded"
+file        = "src/persistence.rs"
+anchor      = '''        let config = match tokio::time::timeout(within, read).await {'''
+replacement = '''        let config = match Ok::<_, ()>(read.await) {'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--test", "process", "--", "a_stalled_config_read_at_startup_does_not_keep"]
+expect_text = "the bridge never reached its broker"
+guard       = "startup_read_bounded"
+
+[[control]]
+name        = "the_stop_waits_out_the_startup"
+file        = "src/main.rs"
+anchor      = '''        signal = stop.recv() => {'''
+replacement = '''        signal = std::future::pending::<&'static str>() => {'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--test", "process", "--", "a_stop_during_a_stalled_config_read_at_startup_is_prompt"]
+expect_text = "of SIGTERM during a stalled config read at startup"
+guard       = "stop_races_the_startup"
+
+[[control]]
+name        = "the_stop_aborts_the_writer_at_once"
+file        = "src/service.rs"
+anchor      = '''                // WAIT: writer-end
+                let _ = writer.await;'''
+replacement = '''                writer.abort();'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "a_stop_writes_what_was_saved_before_it"]
+expect_text = "the stop dropped a save made before it"
+guard       = "stop_flushes_saves"
+
+[[control]]
+name        = "every_save_failure_is_a_warn"
+file        = "src/persistence.rs"
+anchor      = '''        if self.since.is_none() {
+            self.since = Some(Instant::now());'''
+replacement = '''        if true {
+            self.since = Some(Instant::now());'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "a_failing_disk_is_one_warn"]
+expect_text = "not one WARN for the episode"
+guard       = "save_failures_one_warn"
+
+[[control]]
+name        = "every_reconnect_attempt_is_info"
+file        = "src/mqtt_outage.rs"
+anchor      = '''                debug!(kind = "connection_lost", attempts, down_for_ms, retry_in_s, "MQTT reconnect attempt failed");'''
+replacement = '''                tracing::info!(kind = "connection_lost", attempts, down_for_ms, retry_in_s, "MQTT reconnect attempt failed");'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "an_outage_is_one_info_then_debug_attempts"]
+expect_text = "not one INFO, at the outage's first attempt"
+guard       = "outage_attempts_debug"
+
+[[control]]
+name        = "the_outage_warn_lacks_its_attempts"
+file        = "src/mqtt_outage.rs"
+anchor      = '''                        kind = "external_failure",
+                        attempts,'''
+replacement = '''                        kind = "external_failure",'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "an_outage_is_one_info_then_debug_attempts"]
+expect_text = "the WARN does not carry the outage's attempts"
+guard       = "outage_warn_attempts"
+
+[[control]]
+name        = "a_first_reply_proves_the_connection"
+file        = "src/mqtt_outage.rs"
+anchor      = '''        if connection.proven || now.saturating_sub(connection.at) < STABLE_AFTER.as_millis() as u64 {'''
+replacement = '''        if connection.proven {'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "a_link_that_connects_and_drops_stays_one_outage"]
+expect_text = "a connection that dropped within seconds was logged as a recovery"
+guard       = "recovery_on_proof_of_life"
+
+[[control]]
+name        = "a_signal_failure_is_an_external_failure"
+file        = "src/main.rs"
+anchor      = '''            warn!(kind = "signal_handler_unavailable", signal, error = %error,'''
+replacement = '''            warn!(kind = "external_failure", signal, error = %error,'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "a_signal_without_a_handler_is_a_warn"]
+expect_text = "no signal_handler_unavailable WARN naming the signal"
+guard       = "signal_failure_kind"
+
+[[control]]
+name        = "active_before_the_subscription"
+file        = "src/service.rs"
+anchor      = '''        // Subscribe to commands
+        // WAIT: mqtt-request'''
+replacement = '''        // control: Active=true first, as it was
+        publish_retained(mqtt_client, ACTIVE_TOPIC, b"true".to_vec(), &props)
+            .await
+            .change_context_lazy(into_context)?;
+        // WAIT: mqtt-request'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "active_goes_out_only_after_the_subscription"]
+expect_text = "before it subscribed"
+guard       = "active_after_subscribe"
+
+[[control]]
+name        = "the_last_error_is_not_republished"
+file        = "src/service.rs"
+anchor      = '''        if let Some(report) = last_error.get() {'''
+replacement = '''        if let Some(report) = last_error.get().filter(|_| false) {'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "active_goes_out_only_after_the_subscription"]
+expect_text = "did not republish the last error report"
+guard       = "connack_republishes_last_error"

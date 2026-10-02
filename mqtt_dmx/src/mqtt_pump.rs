@@ -122,12 +122,14 @@ impl Incoming {
 }
 
 impl Pump {
-    /// `outage` hears when the broker accepts the connection.
+    /// `outage` hears when the broker takes the connection, and of the connection's traffic —
+    /// keep-alive pings included — by which it proves itself once it is old enough.
     pub fn start(mut events: EventLoop, outage: Arc<Outage>) -> (Pump, Incoming) {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let backlog = Arc::new(Backlog::default());
         let pushed = backlog.clone();
         let task = tokio::spawn(async move {
+            let mut connection = None;
             loop {
                 // WAIT: mqtt-poll
                 match events.poll().await {
@@ -136,9 +138,16 @@ impl Pump {
                         if tx.send(PumpEvent::Publish(publish)).is_err() {
                             return; // the subscriber is gone
                         }
+                        if let Some(connection) = connection.as_mut() {
+                            outage.alive(connection);
+                        }
                     }
-                    Ok(Event::Incoming(Packet::ConnAck(_))) => outage.connected(),
-                    Ok(_) => {}
+                    Ok(Event::Incoming(Packet::ConnAck(_))) => connection = Some(outage.connected()),
+                    Ok(_) => {
+                        if let Some(connection) = connection.as_mut() {
+                            outage.alive(connection);
+                        }
+                    }
                     Err(e) => {
                         let _ = tx.send(PumpEvent::Ended(e.to_string()));
                         return;

@@ -15,13 +15,20 @@ mod persistence;
 mod test_log;
 
 use std::path::PathBuf;
+use std::process::ExitCode;
+use std::time::Duration;
 
-use tracing::info;
+use tracing::{info, warn};
 use rustop::opts;
 use service::ServiceConfig;
 
-#[tokio::main]
-async fn main() {
+/// How long the runtime may take to end once the service has stopped. Every task has been
+/// aborted by then; what the runtime would still wait for is a thread inside a synchronous call —
+/// a write to a stalled disk, a name lookup — which nothing can interrupt, and which a dropped
+/// runtime waits for without limit (no-hang F1, Store 3b re-review X1).
+const RUNTIME_DRAIN: Duration = Duration::from_secs(1);
+
+fn main() -> ExitCode {
     let (args, _) = opts! {
         synopsis "MQTT DMX Controller";
         param mqtt:String, desc: "MQTT broker to connect";
@@ -35,6 +42,26 @@ async fn main() {
             .unwrap_or_else(|| "dmx_config".to_string()),
     );
 
+    let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
+        Ok(runtime) => runtime,
+        Err(e) => {
+            eprintln!("mqtt_dmx: cannot start the async runtime: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    // WAIT: main-run
+    let guard = runtime.block_on(run(args.mqtt, storage_path));
+    // Bounded, where dropping the runtime is not: a thread stuck in a synchronous call is left
+    // behind, and ends with the process.
+    runtime.shutdown_timeout(RUNTIME_DRAIN);
+    // The log's last lines out before the process ends.
+    drop(guard);
+    ExitCode::SUCCESS
+}
+
+/// The bridge, from its stop signals to its stopped service; the log's guard, for `main` to drop
+/// last.
+async fn run(mqtt_broker_address: String, storage_path: PathBuf) -> Option<tracing_init::TracingGuard> {
     // Before anything starts, so a stop during startup is not lost to the signal's default action,
     // which ends the process without the service's shutdown or the log's flush.
     let mut stop = StopSignals::install();
@@ -65,71 +92,89 @@ async fn main() {
         println!("Logging: {guard}");
         info!("Logging: {guard}");
     }
+    // Now that there is a log to say it in (no-hang F3).
+    stop.report_unavailable();
 
     error_stack::Report::set_color_mode(error_stack::fmt::ColorMode::None);
 
     let config = ServiceConfig {
-        mqtt_broker_address: args.mqtt,
+        mqtt_broker_address,
         storage_path,
     };
 
     let service = service::Service::new(config);
 
-    // By path: the wait lint takes methods named `start` and `stop` for a dependency's.
-    let service = service::Service::start(service).await;
+    // A stop during the startup ends it where it is: the startup's waits are bounded, but a stop
+    // need not sit them out. What it leaves running is aborted with the runtime. By path: the
+    // wait lint takes methods named `start` and `stop` for a dependency's.
+    // WAIT: stop-signal
+    let service = tokio::select! {
+        service = service::Service::start(service) => service,
+        signal = stop.recv() => {
+            info!(signal, "Stopping during startup");
+            return guard;
+        }
+    };
 
     // WAIT: stop-signal
     let signal = stop.recv().await;
     info!(signal, "Stopping");
     // Bounded (`Service::stop`).
     let _ = service::Service::stop(service).await;
-
-    // The log's last lines out before the process ends.
-    drop(guard);
+    guard
 }
 
 /// SIGTERM — systemd's stop — and SIGINT (Ctrl-C): either one stops the bridge through its bounded
 /// shutdown. Registered at once, by `install`, not on the first wait.
 struct StopSignals {
     #[cfg(unix)]
-    signals: Option<(tokio::signal::unix::Signal, tokio::signal::unix::Signal)>,
+    term: Option<tokio::signal::unix::Signal>,
+    #[cfg(unix)]
+    int: Option<tokio::signal::unix::Signal>,
+    /// The signals whose handler could not be registered, and why: logged once logging is up.
+    unavailable: Vec<(&'static str, String)>,
 }
 
 impl StopSignals {
     #[cfg(unix)]
     fn install() -> StopSignals {
         use tokio::signal::unix::{signal, SignalKind};
-        let signals = match (signal(SignalKind::terminate()), signal(SignalKind::interrupt())) {
-            (Ok(term), Ok(int)) => Some((term, int)),
-            (Err(e), _) | (_, Err(e)) => {
-                eprintln!("mqtt_dmx: cannot handle SIGTERM and SIGINT ({e}); they will end the process unhandled");
+        let mut unavailable = Vec::new();
+        let mut register = |name: &'static str, kind: SignalKind| match signal(kind) {
+            Ok(signal) => Some(signal),
+            Err(e) => {
+                unavailable.push((name, e.to_string()));
                 None
             }
         };
-        StopSignals { signals }
+        let term = register("SIGTERM", SignalKind::terminate());
+        let int = register("SIGINT", SignalKind::interrupt());
+        StopSignals { term, int, unavailable }
     }
 
     #[cfg(not(unix))]
     fn install() -> StopSignals {
-        StopSignals {}
+        StopSignals { unavailable: Vec::new() }
     }
 
-    /// Waits for a stop signal; its name.
+    /// A WARN for each signal whose handler could not be registered: that signal ends the process
+    /// by its default action, skipping the bounded shutdown and the log's flush.
+    fn report_unavailable(&self) {
+        for (signal, error) in &self.unavailable {
+            warn!(kind = "signal_handler_unavailable", signal, error = %error,
+                  "Stop signal handler unavailable: this signal will end the bridge without its shutdown");
+        }
+    }
+
+    /// Waits for a stop signal; its name. One that could not be registered never comes.
     #[cfg(unix)]
     async fn recv(&mut self) -> &'static str {
-        match &mut self.signals {
-            Some((term, int)) => {
-                // WAIT: stop-signal
-                tokio::select! {
-                    _ = term.recv() => "SIGTERM",
-                    _ = int.recv() => "SIGINT",
-                }
-            }
-            None => {
-                // WAIT: stop-signal
-                std::future::pending::<()>().await;
-                "none"
-            }
+        // WAIT: stop-signal
+        tokio::select! {
+            Some(()) = recv_or_never(&mut self.term) => "SIGTERM",
+            Some(()) = recv_or_never(&mut self.int) => "SIGINT",
+            // Both streams ended: the runtime's signal driver is gone.
+            else => "signals closed",
         }
     }
 
@@ -141,6 +186,20 @@ impl StopSignals {
     }
 }
 
+/// The next delivery of `signal`, or never if it has no handler.
+#[cfg(unix)]
+async fn recv_or_never(signal: &mut Option<tokio::signal::unix::Signal>) -> Option<()> {
+    match signal {
+        // WAIT: stop-signal
+        Some(signal) => signal.recv().await,
+        None => {
+            // WAIT: stop-signal
+            std::future::pending::<()>().await;
+            None
+        }
+    }
+}
+
 pub fn get_version() -> String {
     format!("mqtt_dmx: {} (built at {})", built_info::PKG_VERSION, built_info::BUILT_TIME_UTC)
 }
@@ -148,4 +207,31 @@ pub fn get_version() -> String {
 // Include the generated-file as a separate module
 pub mod built_info {
     include!(concat!(env!("OUT_DIR"), "/built.rs"));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StopSignals;
+    use crate::test_log::capture;
+
+    /// A stop signal whose handler could not be registered is a WARN of its own kind once logging
+    /// is up — never only a line on stderr, nor an `external_failure` (no-hang F3, Store 3b
+    /// re-review X3).
+    #[test]
+    fn a_signal_without_a_handler_is_a_warn_once_logging_is_up() {
+        let signals = StopSignals {
+            #[cfg(unix)]
+            term: None,
+            #[cfg(unix)]
+            int: None,
+            unavailable: vec![("SIGTERM", "no reactor".to_string())],
+        };
+        let events = capture(|| signals.report_unavailable());
+        assert!(
+            events.iter().any(|e| e.level == tracing::Level::WARN
+                && e.kind() == Some("signal_handler_unavailable")
+                && e.field("signal") == Some("SIGTERM")),
+            "no signal_handler_unavailable WARN naming the signal: {events:#?}"
+        );
+    }
 }

@@ -41,11 +41,14 @@ pub async fn session(
     info!("Starting MQTT subscriber session");
     let into_context = || MqttError::Context("In MQTT subscriber session".to_string());
 
+    // The configuration as last saved, from memory: a read of the disk here would wait on it in
+    // an async worker, and could find it behind the saves still waiting to be written (no-hang F1).
+    let config = persistence.config();
     let mut mqtt_subscriber = MqttSubscriber {
-        universes: persistence.load_universes(),
-        arrays: persistence.load_arrays(),
-        effects: persistence.load_effects(),
-        values: persistence.load_values(),
+        universes: config.universes,
+        arrays: config.arrays,
+        effects: config.effects,
+        values: config.values,
         to_artnet_tx,
         to_array_tx,
         to_mqtt_publisher_tx,
