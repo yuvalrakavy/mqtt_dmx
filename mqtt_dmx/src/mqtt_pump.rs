@@ -23,8 +23,9 @@ const HIGH_WATER: usize = 1000;
 const LOW_WATER: usize = 100;
 
 /// The forward queue's depth, and whether its high-water WARN is standing. The flag's lock is held
-/// to read or set it alone: the logging comes after it is released (tracing-init's console and
-/// file writers are synchronous).
+/// to read or set it alone: the logging comes after it is released (the fleet rule: nothing is
+/// logged under a lock. tracing-init's writers no longer block — since 97eebba they are
+/// non-blocking and lossy — but a log call still formats and queues while the lock is held).
 #[derive(Default)]
 struct Backlog {
     depth: AtomicUsize,
@@ -168,9 +169,9 @@ mod tests {
     use std::sync::Arc;
     use tracing::Level;
 
-    /// The backlog's WARN and INFO are logged after its lock is released: tracing-init's console
-    /// and file writers are synchronous, so a log line under the lock is a write to a file or a
-    /// terminal the pump would wait on while holding it (Store no-hang 3b review, C-10).
+    /// The backlog's WARN and INFO are logged after its lock is released: nothing is logged under
+    /// a lock (Store no-hang 3b review, C-10; when it was written, tracing-init's writers were
+    /// synchronous, and a line under the lock was a write the pump would wait on while holding it).
     #[test]
     fn the_backlog_logs_nothing_while_it_holds_its_lock() {
         let backlog = Arc::new(Backlog::default());
