@@ -85,14 +85,48 @@ guard       = "dropped_reports_drain_info"
 [[control]]
 name        = "the_backlog_never_raises_its_warn"
 file        = "src/mqtt_pump.rs"
-anchor      = '''            if high.is_none() {
-                *high = Some(Instant::now());'''
-replacement = '''            if false {
-                *high = Some(Instant::now());'''
+anchor      = '''        if high.is_none() {
+            *high = Some(Instant::now());'''
+replacement = '''        if false {
+            *high = Some(Instant::now());'''
 target      = "command"
 argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "a_backlog_past_high_water"]
 expect_text = "not flagged at the high-water mark"
 guard       = "backlog_high_water"
+
+[[control]]
+name        = "the_backlog_logs_under_its_lock"
+file        = "src/mqtt_pump.rs"
+anchor      = '''        if depth >= HIGH_WATER && self.raise() {
+            warn!('''
+replacement = '''        if depth >= HIGH_WATER && self.raise() {
+            // control: the WARN logged under the lock, as it was
+            let _held = self.high_since.lock().unwrap_or_else(|p| p.into_inner());
+            warn!('''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "the_backlog_logs_nothing_while_it_holds_its_lock"]
+expect_text = "logged while holding the backlog's lock"
+guard       = "backlog_logs_after_its_lock"
+
+[[control]]
+name        = "discarded_publishes_go_uncounted"
+file        = "src/mqtt_pump.rs"
+anchor      = '''        if discarded > 0 {'''
+replacement = '''        if discarded > 0 && discarded == 0 {'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "publishes_left_unread_when_a_session_ends"]
+expect_text = "no WARN counting the publishes discarded at session end"
+guard       = "session_end_counts_discards"
+
+[[control]]
+name        = "a_session_end_leaves_the_high_water_warn_standing"
+file        = "src/mqtt_pump.rs"
+anchor      = '''        if let Some(lasted) = self.backlog.clear() {'''
+replacement = '''        if let Some(lasted) = None::<Duration> {'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "publishes_left_unread_when_a_session_ends"]
+expect_text = "the standing high-water WARN was never closed"
+guard       = "session_end_closes_the_episode"
 
 [[control]]
 name        = "a_wait_loses_its_tag"

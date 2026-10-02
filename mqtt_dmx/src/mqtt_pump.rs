@@ -2,7 +2,7 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use rumqttc::v5::mqttbytes::v5::{Packet, Publish};
 use rumqttc::v5::{Event, EventLoop};
@@ -20,7 +20,9 @@ pub enum PumpEvent {
 const HIGH_WATER: usize = 1000;
 const LOW_WATER: usize = 100;
 
-/// The forward queue's depth, and whether its high-water WARN is standing.
+/// The forward queue's depth, and whether its high-water WARN is standing. The flag's lock is held
+/// to read or set it alone: the logging comes after it is released (tracing-init's console and
+/// file writers are synchronous).
 #[derive(Default)]
 struct Backlog {
     depth: AtomicUsize,
@@ -30,25 +32,37 @@ struct Backlog {
 impl Backlog {
     fn pushed(&self) {
         let depth = self.depth.fetch_add(1, Ordering::SeqCst) + 1;
-        if depth >= HIGH_WATER {
-            // WAIT: mqtt-backlog-lock
-            let mut high = self.high_since.lock().unwrap_or_else(|p| p.into_inner());
-            if high.is_none() {
-                *high = Some(Instant::now());
-                warn!(kind = "mqtt_backlog_high", depth, "MQTT commands are arriving faster than the bridge handles them");
-            }
+        if depth >= HIGH_WATER && self.raise() {
+            warn!(kind = "mqtt_backlog_high", depth, "MQTT commands are arriving faster than the bridge handles them");
         }
     }
 
     fn popped(&self) {
         let depth = self.depth.fetch_sub(1, Ordering::SeqCst) - 1;
         if depth <= LOW_WATER {
-            // WAIT: mqtt-backlog-lock
-            let mut high = self.high_since.lock().unwrap_or_else(|p| p.into_inner());
-            if let Some(since) = high.take() {
-                info!(kind = "mqtt_backlog_drained", depth, lasted_ms = since.elapsed().as_millis() as u64, "MQTT command backlog drained");
+            if let Some(lasted) = self.clear() {
+                info!(kind = "mqtt_backlog_drained", depth, lasted_ms = lasted.as_millis() as u64, "MQTT command backlog drained");
             }
         }
+    }
+
+    /// Raises the high-water flag; `true` if this call raised it.
+    fn raise(&self) -> bool {
+        // WAIT: mqtt-backlog-lock
+        let mut high = self.high_since.lock().unwrap_or_else(|p| p.into_inner());
+        if high.is_none() {
+            *high = Some(Instant::now());
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Clears the high-water flag; how long it stood, if it was raised.
+    fn clear(&self) -> Option<Duration> {
+        // WAIT: mqtt-backlog-lock
+        let mut high = self.high_since.lock().unwrap_or_else(|p| p.into_inner());
+        high.take().map(|since| since.elapsed())
     }
 }
 
@@ -70,6 +84,28 @@ impl Drop for Pump {
 pub struct Incoming {
     rx: tokio::sync::mpsc::UnboundedReceiver<PumpEvent>,
     backlog: Arc<Backlog>,
+}
+
+/// The session is over, and what its subscriber never read is discarded — when the publisher ends
+/// first, the session aborts the subscriber with publishes still queued. They are counted in one
+/// WARN, and a standing high-water WARN is closed: the next session has a backlog of its own.
+impl Drop for Incoming {
+    fn drop(&mut self) {
+        self.rx.close();
+        let mut discarded: u64 = 0;
+        while let Ok(event) = self.rx.try_recv() {
+            if matches!(event, PumpEvent::Publish(_)) {
+                discarded += 1;
+            }
+        }
+        if discarded > 0 {
+            warn!(kind = "mqtt_commands_discarded", discarded, "MQTT commands discarded unhandled: their session ended");
+        }
+        if let Some(lasted) = self.backlog.clear() {
+            info!(kind = "mqtt_backlog_drained", discarded, lasted_ms = lasted.as_millis() as u64,
+                  "MQTT command backlog ended with its session");
+        }
+    }
 }
 
 impl Incoming {
@@ -112,7 +148,59 @@ impl Pump {
 
 #[cfg(test)]
 mod tests {
-    use super::{Backlog, HIGH_WATER, LOW_WATER};
+    use super::{Backlog, Incoming, PumpEvent, HIGH_WATER, LOW_WATER};
+    use crate::test_log::{capture, capture_probing};
+    use rumqttc::v5::mqttbytes::{v5::Publish, QoS};
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+    use tracing::Level;
+
+    /// The backlog's WARN and INFO are logged after its lock is released: tracing-init's console
+    /// and file writers are synchronous, so a log line under the lock is a write to a file or a
+    /// terminal the pump would wait on while holding it (Store no-hang 3b review, C-10).
+    #[test]
+    fn the_backlog_logs_nothing_while_it_holds_its_lock() {
+        let backlog = Arc::new(Backlog::default());
+        let probe = backlog.clone();
+        let events = capture_probing(move || probe.high_since.try_lock().is_err(), || {
+            for _ in 0..HIGH_WATER {
+                backlog.pushed();
+            }
+            while backlog.depth.load(Ordering::SeqCst) > LOW_WATER {
+                backlog.popped();
+            }
+        });
+        let kinds: Vec<_> = events.iter().filter_map(|e| e.kind()).collect();
+        assert_eq!(kinds, ["mqtt_backlog_high", "mqtt_backlog_drained"], "the backlog's WARN and INFO were not logged");
+        let under_lock: Vec<_> = events.iter().filter(|e| e.probe).collect();
+        assert!(under_lock.is_empty(), "logged while holding the backlog's lock: {under_lock:#?}");
+    }
+
+    /// When a session ends with publishes its subscriber never read — the publisher ended first, and
+    /// the subscriber was aborted — they are discarded: one WARN counting them, and a standing
+    /// high-water WARN closed by its INFO, which a new session's backlog would never send (Store
+    /// no-hang 3b review, C-6).
+    #[test]
+    fn publishes_left_unread_when_a_session_ends_are_counted_and_its_high_water_warn_closed() {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let backlog = Arc::new(Backlog::default());
+        for _ in 0..HIGH_WATER {
+            backlog.pushed();
+            assert!(tx.send(PumpEvent::Publish(Publish::new("DMX/Command/On", QoS::AtMostOnce, "{}", None))).is_ok());
+        }
+        let incoming = Incoming { rx, backlog };
+        let events = capture(|| drop(incoming));
+        let discarded: Vec<_> = events
+            .iter()
+            .filter(|e| e.level == Level::WARN && e.kind() == Some("mqtt_commands_discarded"))
+            .filter_map(|e| e.field("discarded"))
+            .collect();
+        assert_eq!(discarded, [HIGH_WATER.to_string()], "no WARN counting the publishes discarded at session end: {events:#?}");
+        assert!(
+            events.iter().any(|e| e.level == Level::INFO && e.kind() == Some("mqtt_backlog_drained")),
+            "the standing high-water WARN was never closed: {events:#?}"
+        );
+    }
 
     /// The owner's overload ruling (no-hang §14.6): the forward queue drops nothing; past
     /// HIGH_WATER unread commands it raises its WARN once, and clears it back under LOW_WATER.
