@@ -1,5 +1,5 @@
 use error_stack::{Report, ResultExt};
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 use rumqttc::v5::{AsyncClient, EventLoop, MqttOptions, mqttbytes::QoS, mqttbytes::v5::{LastWill, PublishProperties}};
 use std::{marker::PhantomData, path::PathBuf, sync::Arc};
 use thiserror::Error;
@@ -34,12 +34,14 @@ const LOAD_WITHIN: Duration = Duration::from_secs(10);
 pub struct Started {}
 pub struct Stopped {}
 
-/// What outlives every MQTT session: the broker's outage, which spans many, and the last error
-/// report, which each connection republishes.
+/// What outlives every MQTT session: the broker's outage, which spans many, the last error
+/// report, which each connection republishes, and the service's stop, which the subscriber
+/// consults to tell a manager that stopped with the service from one that died.
 #[derive(Clone)]
 struct Lasting {
     outage: Arc<Outage>,
     last_error: LastError,
+    stopping: CancellationToken,
 }
 
 pub struct ServiceConfig {
@@ -164,7 +166,7 @@ impl Service {
         persistence: Arc<Persistence>,
         lasting: Lasting,
     ) -> Result<(), Report<MqttError>> {
-        let Lasting { outage, last_error } = lasting;
+        let Lasting { outage, last_error, stopping } = lasting;
         let (mqtt_client, mqtt_event_loop) = Service::mqtt_client(broker_address);
         // Polling first, so every publish below has an event loop draining it.
         let (_pump, incoming) = Pump::start(mqtt_event_loop, outage);
@@ -183,6 +185,7 @@ impl Service {
                 to_array_tx,
                 to_mqtt_publisher_tx,
                 persistence,
+                stopping,
             )
             .await;
             info!("MQTT subscriber session ended: {:?}", e)
@@ -206,8 +209,9 @@ impl Service {
         to_mqtt_publisher_rx: async_channel::Receiver<messages::ToMqttPublisherMessage>,
         to_mqtt_publisher_tx: async_channel::Sender<messages::ToMqttPublisherMessage>,
         persistence: Arc<Persistence>,
+        stopping: CancellationToken,
     ) {
-        let lasting = Lasting { outage: Arc::new(Outage::new()), last_error: LastError::default() };
+        let lasting = Lasting { outage: Arc::new(Outage::new()), last_error: LastError::default(), stopping };
         loop {
             let _ = Self::mqtt_session(
                     broker_address,
@@ -300,8 +304,9 @@ impl Service<Stopped> {
             {
                 // WAIT: artnet-reply
                 if let Ok(Err(e)) = rx.await {
-                    error!(kind = "decode_error", universe_id = %universe_id, error = ?e,
-                           "failed to restore persisted universe");
+                    // The file was read and parsed; what it says was refused (logging policy).
+                    warn!(kind = "command_rejected", universe_id = %universe_id, error = ?e,
+                          "failed to restore persisted universe: refused");
                 }
             }
         }
@@ -320,8 +325,9 @@ impl Service<Stopped> {
             {
                 // WAIT: array-reply
                 if let Ok(Err(e)) = rx.await {
-                    error!(kind = "decode_error", array_id = %array_id, error = ?e,
-                           "failed to restore persisted array");
+                    // The file was read and parsed; what it says was refused (logging policy).
+                    warn!(kind = "command_rejected", array_id = %array_id, error = ?e,
+                          "failed to restore persisted array: refused");
                 }
             }
         }
@@ -340,8 +346,9 @@ impl Service<Stopped> {
             {
                 // WAIT: array-reply
                 if let Ok(Err(e)) = rx.await {
-                    error!(kind = "decode_error", effect_id = %effect_id, error = ?e,
-                           "failed to restore persisted effect");
+                    // The file was read and parsed; what it says was refused (logging policy).
+                    warn!(kind = "command_rejected", effect_id = %effect_id, error = ?e,
+                          "failed to restore persisted effect: refused");
                 }
             }
         }
@@ -360,13 +367,15 @@ impl Service<Stopped> {
             {
                 // WAIT: array-reply
                 if let Ok(Err(e)) = rx.await {
-                    error!(kind = "decode_error", value_name = %value_name, error = ?e,
-                           "failed to restore persisted value");
+                    // The file was read and parsed; what it says was refused (logging policy).
+                    warn!(kind = "command_rejected", value_name = %value_name, error = ?e,
+                          "failed to restore persisted value: refused");
                 }
             }
         }
 
         let broker_address = self.config.mqtt_broker_address.clone();
+        let cancel_mqtt = cancel.clone();
 
         self.workers.spawn(async move {
             Self::mqtt(
@@ -376,6 +385,7 @@ impl Service<Stopped> {
                 to_mqtt_publisher_rx,
                 to_mqtt_publisher_tx,
                 persistence,
+                cancel_mqtt,
             )
             .await;
         });

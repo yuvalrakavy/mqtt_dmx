@@ -282,3 +282,85 @@ async fn commands_that_wait_on_artnet_complete_while_its_errors_back_up_behind_a
     };
     bounded(service, "artnet", test).await;
 }
+
+/// The events at `level` with `kind`.
+fn of_kind<'a>(events: &'a [crate::test_log::Captured], level: tracing::Level, kind: &str) -> Vec<&'a crate::test_log::Captured> {
+    events.iter().filter(|e| e.level == level && e.kind() == Some(kind)).collect()
+}
+
+/// The events at ERROR, or with `external_failure`: neither belongs to a command that failed.
+fn misfiled(events: &[crate::test_log::Captured]) -> Vec<&crate::test_log::Captured> {
+    events.iter().filter(|e| e.level == tracing::Level::ERROR || e.kind() == Some("external_failure")).collect()
+}
+
+/// A failed command is logged once, where it failed, at the level and with the kind its cause calls
+/// for (the logging policy; Store no-hang 3b, round 2): a command the bridge cannot parse is input
+/// that failed validation, INFO `validation_rejected`; one the ArtNet or array manager refuses — an
+/// array nobody defined, an effect that fails at its first tick — is WARN `command_rejected`: the
+/// Store's configuration needs fixing. Never an ERROR, since no code change is warranted, and never
+/// `external_failure`, since nothing external is down. The old bridge logged each twice: an ERROR
+/// `decode_error` where it failed, and a WARN `external_failure` where its report was published.
+/// One runtime thread, so every task logs where the capture is.
+#[test]
+fn a_failed_command_is_logged_once_with_the_kind_its_cause_calls_for() {
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let events = crate::test_log::capture(|| {
+        runtime.block_on(async {
+            let broker = FakeBroker::start().await;
+            let service = start_bridge(&broker, "kinds").await;
+            let test = async {
+                // Malformed: not a DMX subtopic, and a payload that is not JSON.
+                assert!(broker.send("DMX/Bogus", "{}"));
+                assert!(broker.send("DMX/Command/On", "not json"));
+                // Refused: an array nobody defined.
+                assert!(broker.send("DMX/Command/On", r#"{"array_id": "Nobody"}"#));
+                // Accepted, then failing at its first tick: an array on a universe nobody defined.
+                assert!(broker.send("DMX/Array/Ghost", GHOST_ARRAY));
+                assert!(broker.send("DMX/Command/On", r#"{"array_id": "Ghost"}"#));
+                assert!(
+                    broker.wait_until(Duration::from_secs(10), |b| b.received_on("DMX/Error").len() >= 4).await,
+                    "not every failure was reported: {:?}",
+                    error_reports(&broker)
+                );
+            };
+            bounded(service, "kinds", test).await;
+        });
+    });
+    assert!(misfiled(&events).is_empty(), "a failed command was logged as an ERROR or an external_failure: {:#?}", misfiled(&events));
+    let rejected = of_kind(&events, tracing::Level::INFO, "validation_rejected");
+    assert_eq!(rejected.len(), 2, "the malformed commands were not each one INFO validation_rejected: {events:#?}");
+    let refused = of_kind(&events, tracing::Level::WARN, "command_rejected");
+    assert_eq!(refused.len(), 2, "the refused commands were not each one WARN command_rejected: {events:#?}");
+}
+
+/// A saved configuration the managers refuse when it is restored at startup — a universe number
+/// past 15 — is a command refused, WARN `command_rejected`, not an ERROR `decode_error`: the file
+/// was read and parsed; what it says needs fixing, not the code.
+#[test]
+fn a_saved_config_the_managers_refuse_on_restore_is_a_warn() {
+    let storage_path = storage("restore");
+    let _ = std::fs::remove_dir_all(&storage_path);
+    std::fs::create_dir_all(&storage_path).expect("create the storage directory");
+    std::fs::write(
+        storage_path.join("universes.json"),
+        r#"{"Bad": {"description": "past 15", "controller": "127.0.0.1", "net": 0, "subnet": 0, "universe": 99,
+            "channels": 8, "disable_send": true}}"#,
+    )
+    .expect("write the saved universes");
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let events = crate::test_log::capture(|| {
+        runtime.block_on(async {
+            let broker = FakeBroker::start().await;
+            let config = ServiceConfig { mqtt_broker_address: broker.address(), storage_path: storage_path.clone() };
+            let service = Service::new(config).start().await;
+            let _ = tokio::time::timeout(Duration::from_secs(5), service.stop()).await;
+        });
+    });
+    let _ = std::fs::remove_dir_all(&storage_path);
+    assert!(misfiled(&events).is_empty(), "a refused restore was logged as an ERROR or an external_failure: {:#?}", misfiled(&events));
+    let refused = of_kind(&events, tracing::Level::WARN, "command_rejected");
+    assert!(
+        refused.len() == 1 && refused[0].field("universe_id") == Some("Bad"),
+        "the refused restore was not one WARN command_rejected naming the universe: {events:#?}"
+    );
+}

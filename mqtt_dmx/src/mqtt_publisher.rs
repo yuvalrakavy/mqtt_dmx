@@ -3,7 +3,7 @@ use async_channel::Receiver;
 use rumqttc::v5::{AsyncClient, mqttbytes::QoS, mqttbytes::v5::PublishProperties};
 use serde::Serialize;
 use std::sync::{Arc, Mutex};
-use tracing::{info, warn};
+use tracing::{debug, info};
 
 use crate::{messages::ToMqttPublisherMessage, service::MqttError};
 
@@ -60,8 +60,9 @@ pub async fn session(
                     message: error,
                 };
 
-                warn!(kind = "external_failure", error = ?error_message_body,
-                      "MQTT DMX command error reported");
+                // Logged where it failed, with the kind its cause calls for (the subscriber, the
+                // ArtNet manager); here, only that it is reported.
+                debug!(error = ?error_message_body, "Reporting a DMX error on DMX/Error");
 
                 let error_message_body = serde_json::to_vec(&error_message_body).change_context_lazy(into_context)?;
                 // The bridge's state first: the next connection republishes it, whether or not

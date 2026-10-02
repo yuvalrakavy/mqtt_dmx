@@ -66,13 +66,8 @@ impl Persistence {
     /// wait for it).
     pub async fn load(&self, within: Duration) -> Config {
         let dir = self.storage_path.clone();
-        let read = tokio::task::spawn_blocking(move || {
-            if let Err(e) = fs::create_dir_all(&dir) {
-                warn!(kind = "external_failure", path = %dir.display(), error = %e,
-                      "failed to create storage directory");
-            }
-            read_config(&dir)
-        });
+        // The directory is made by the first save (`write_file`), whose failure is the writer's.
+        let read = tokio::task::spawn_blocking(move || read_config(&dir));
         // WAIT: persistence-load
         let config = match tokio::time::timeout(within, read).await {
             Ok(Ok(config)) => config,
@@ -81,7 +76,7 @@ impl Persistence {
                 Config::default()
             }
             Err(_) => {
-                warn!(kind = "external_failure", path = %self.storage_path.display(),
+                warn!(kind = "config_load_failed", path = %self.storage_path.display(),
                       bound_ms = within.as_millis() as u64,
                       "Reading the saved configuration timed out: starting without it, until the broker's retained configs arrive");
                 Config::default()
@@ -221,6 +216,8 @@ impl Failing {
 
 /// Writes `json` as `file` in `dir`: a temporary file, then a rename over the old one. Blocking.
 fn write_file(dir: &Path, file: &str, json: &str) -> std::io::Result<()> {
+    fs::create_dir_all(dir)
+        .map_err(|e| std::io::Error::new(e.kind(), format!("creating {}: {e}", dir.display())))?;
     let tmp = dir.join(format!(".{file}.tmp"));
     fs::write(&tmp, json)
         .map_err(|e| std::io::Error::new(e.kind(), format!("writing {}: {e}", tmp.display())))?;
@@ -259,8 +256,10 @@ fn load_file<T: for<'de> Deserialize<'de>>(dir: &Path, filename: &str) -> HashMa
             HashMap::new()
         }
         Err(e) => {
-            warn!(kind = "external_failure", path = %path.display(), error = %e,
-                  "failed to read persisted config file");
+            // Once, at startup: not an outage of something external, which `external_failure`
+            // means (the logging policy), but the saved configuration lost to this run.
+            warn!(kind = "config_load_failed", path = %path.display(), error = %e,
+                  "failed to read persisted config file: starting without it");
             HashMap::new()
         }
     }
@@ -297,5 +296,24 @@ mod tests {
             .collect();
         assert_eq!(recovered.len(), 1, "not one INFO when saves worked again: {events:#?}");
         assert_eq!(recovered[0].field("failures"), Some("3"), "the INFO does not count the episode's failures");
+    }
+
+    /// A saved file that cannot be read — here a directory where the file should be — is a WARN
+    /// `config_load_failed`: the bridge starts without it. Not `external_failure`, which is an
+    /// outage of something external, one episode (Store no-hang 3b, round 2).
+    #[test]
+    fn a_saved_file_that_cannot_be_read_is_a_config_load_failed_warn() {
+        let dir = std::env::temp_dir().join(format!("mqtt-dmx-unreadable-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("universes.json")).expect("a directory where the file should be");
+        let events = capture(|| {
+            let _ = super::read_config(&dir);
+        });
+        let _ = std::fs::remove_dir_all(&dir);
+        let warns: Vec<_> = events.iter().filter(|e| e.level <= Level::WARN).collect();
+        assert!(
+            warns.len() == 1 && warns[0].kind() == Some("config_load_failed"),
+            "an unreadable saved file was not one WARN config_load_failed: {warns:#?}"
+        );
     }
 }

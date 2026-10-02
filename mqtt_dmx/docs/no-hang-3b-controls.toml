@@ -347,3 +347,95 @@ target      = "command"
 argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "active_goes_out_only_after_the_subscription"]
 expect_text = "did not republish the last error report"
 guard       = "connack_republishes_last_error"
+
+# --- Store 3b round 2, kinds: a failed command is logged once, at the level and kind its cause
+# calls for; external_failure only for an external outage, as one episode ---
+
+# The publisher logs every report as an external_failure, as it did.
+[[control]]
+name        = "every_report_is_an_external_failure"
+file        = "src/mqtt_publisher.rs"
+anchor      = '''                debug!(error = ?error_message_body, "Reporting a DMX error on DMX/Error");'''
+replacement = '''                tracing::warn!(kind = "external_failure", error = ?error_message_body, "MQTT DMX command error reported");'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "a_failed_command_is_logged_once"]
+expect_text = "a failed command was logged as an ERROR or an external_failure"
+guard       = "reports_not_logged_again"
+
+# A command that does not parse is an ERROR decode_error, as it was.
+[[control]]
+name        = "a_parse_failure_is_an_error"
+file        = "src/mqtt_subscriber.rs"
+anchor      = '''        info!(kind = "validation_rejected", topic, error = %error, "DMX command rejected: it does not parse");'''
+replacement = '''        error!(kind = "decode_error", topic, error = %error, "MQTT message handling failed");'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "a_failed_command_is_logged_once"]
+expect_text = "a failed command was logged as an ERROR or an external_failure"
+guard       = "malformed_command_is_validation_rejected"
+
+# A command a manager refused is taken for malformed input.
+[[control]]
+name        = "a_refusal_is_taken_for_bad_input"
+file        = "src/mqtt_subscriber.rs"
+anchor      = '''    } else if error.contains::<ArtnetError>() || error.contains::<DmxArrayError>() {'''
+replacement = '''    } else if false {'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "a_failed_command_is_logged_once"]
+expect_text = "the malformed commands were not each one INFO validation_rejected"
+guard       = "refused_command_is_command_rejected"
+
+# An effect that fails at its tick is not logged where it failed (only its report was, by the publisher).
+[[control]]
+name        = "a_failed_effect_goes_unlogged"
+file        = "src/artnet_manager/manager.rs"
+anchor      = '''                        warn!(kind = "command_rejected", effect_id = %effect_id, error = %e,
+                              "DMX effect failed and was stopped");'''
+replacement = ''''''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "a_failed_command_is_logged_once"]
+expect_text = "the refused commands were not each one WARN command_rejected"
+guard       = "failed_effect_is_command_rejected"
+
+# A saved universe refused on restore is an ERROR decode_error, as it was.
+[[control]]
+name        = "a_refused_restore_is_an_error"
+file        = "src/service.rs"
+anchor      = '''                    warn!(kind = "command_rejected", universe_id = %universe_id, error = ?e,'''
+replacement = '''                    tracing::error!(kind = "decode_error", universe_id = %universe_id, error = ?e,'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "a_saved_config_the_managers_refuse_on_restore"]
+expect_text = "a refused restore was logged as an ERROR or an external_failure"
+guard       = "refused_restore_is_command_rejected"
+
+# A saved file that cannot be read is an external_failure, as it was.
+[[control]]
+name        = "an_unreadable_file_is_an_external_failure"
+file        = "src/persistence.rs"
+anchor      = '''            warn!(kind = "config_load_failed", path = %path.display(), error = %e,'''
+replacement = '''            warn!(kind = "external_failure", path = %path.display(), error = %e,'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "a_saved_file_that_cannot_be_read"]
+expect_text = "was not one WARN config_load_failed"
+guard       = "unreadable_file_is_config_load_failed"
+
+# Every failed ArtNet send is a WARN external_failure, as each report was.
+[[control]]
+name        = "every_failed_send_is_a_warn"
+file        = "src/artnet_manager/manager.rs"
+anchor      = '''        debug!(kind = "device_connection_lost", error, failures = self.failures, down_for_ms, "ArtNet send failed again");'''
+replacement = '''        warn!(kind = "external_failure", error, failures = self.failures, down_for_ms, "ArtNet send failed again");'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "failing_sends_are_one_outage_episode"]
+expect_text = "the later failures are not DEBUG"
+guard       = "send_failures_one_episode"
+
+# A manager gone at the service's stop is an ERROR too.
+[[control]]
+name        = "a_manager_gone_at_stop_is_an_error"
+file        = "src/mqtt_subscriber.rs"
+anchor      = '''    if manager_gone && stopping.is_cancelled() {'''
+replacement = '''    if manager_gone && stopping.is_cancelled() && false {'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "a_command_whose_manager_has_gone"]
+expect_text = "a manager gone with the service's stop was logged above DEBUG"
+guard       = "manager_gone_at_stop_is_debug"

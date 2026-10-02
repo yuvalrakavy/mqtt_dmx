@@ -183,7 +183,10 @@ impl ArtnetManager {
         }
     }
 
-    fn send_modified_universes(&mut self) -> Result<(), Report<ArtnetError>> {
+    /// Sends every universe that is due; how many packets went out on the wire (a universe with
+    /// `disable_send` sends nothing).
+    fn send_modified_universes(&mut self) -> Result<usize, Report<ArtnetError>> {
+        let mut sent = 0;
         for (universe_id, universe) in self.universes.iter_mut() {
             if !universe.modified {
                 universe.non_modified_ticks += 1;
@@ -195,9 +198,12 @@ impl ArtnetManager {
             if universe.modified {
                 debug!("Sending packet to {}", universe_id);
                 universe.send()?;
+                if !universe.disable_send {
+                    sent += 1;
+                }
             }
         }
-        Ok(())
+        Ok(sent)
     }
 
     fn set_channels(
@@ -265,6 +271,7 @@ impl ArtnetManager {
         // Set tick timer
         let mut tick_timer = interval(TICK_DURATION);
         let mut reporter = Reporter::new(to_mqtt_publisher);
+        let mut send_outage = SendOutage::default();
 
         'run: loop {
             // WAIT: artnet-loop
@@ -273,14 +280,23 @@ impl ArtnetManager {
 
                 _ = tick_timer.tick() => {
                     for (effect_id, e) in self.tick() {
+                        // A command that failed, logged where it failed (the logging policy):
+                        // once, since the tick stops the effect.
+                        warn!(kind = "command_rejected", effect_id = %effect_id, error = %e,
+                              "DMX effect failed and was stopped");
                         if !reporter.report(format!("Effect {effect_id}: {e}")) {
                             break 'run;
                         }
                     }
 
-                    if let Err(e) = self.send_modified_universes() {
-                        if !reporter.report(e.to_string()) {
-                            break;
+                    match self.send_modified_universes() {
+                        Ok(0) => {}
+                        Ok(_) => send_outage.sent(),
+                        Err(e) => {
+                            send_outage.failed(&e);
+                            if !reporter.report(e.to_string()) {
+                                break;
+                            }
                         }
                     }
 
@@ -295,6 +311,57 @@ impl ArtnetManager {
         }
 
         info!("ArtnetManager stopped");
+    }
+}
+
+/// How long the ArtNet sends may keep failing before it is a WARN, once per outage.
+const SEND_OUTAGE_WARN_AFTER: Duration = Duration::from_secs(30);
+
+/// The ArtNet nodes' outage, as the sends see it: a send the kernel refuses — no route to the
+/// node, its port unreachable — is a failed attempt, and the tick tries again 50 ms later. One
+/// episode in the log (no-hang F2; it was a WARN `external_failure` per tick, 20 a second): INFO
+/// `device_connection_lost` at the first failure, DEBUG for the rest, one WARN `device_unreachable`
+/// once it has lasted 30 s, and INFO `device_recovered` with its length and failures when a packet
+/// goes out again — the only proof of life ArtNet gives, since a node never answers.
+#[derive(Default)]
+pub(super) struct SendOutage {
+    since: Option<Instant>,
+    failures: u64,
+    warned: bool,
+}
+
+impl SendOutage {
+    pub(super) fn failed(&mut self, error: &Report<ArtnetError>) {
+        self.failed_at(Instant::now(), &error.to_string());
+    }
+
+    pub(super) fn sent(&mut self) {
+        self.sent_at(Instant::now());
+    }
+
+    pub(super) fn failed_at(&mut self, now: Instant, error: &str) {
+        self.failures += 1;
+        let Some(since) = self.since else {
+            self.since = Some(now);
+            info!(kind = "device_connection_lost", error, "ArtNet send failed: the node is unreachable");
+            return;
+        };
+        let down_for_ms = now.saturating_duration_since(since).as_millis() as u64;
+        debug!(kind = "device_connection_lost", error, failures = self.failures, down_for_ms, "ArtNet send failed again");
+        if !self.warned && now.saturating_duration_since(since) >= SEND_OUTAGE_WARN_AFTER {
+            self.warned = true;
+            warn!(kind = "device_unreachable", failures = self.failures, down_for_ms, error,
+                  "ArtNet node unreachable: sends have failed for over 30 s");
+        }
+    }
+
+    pub(super) fn sent_at(&mut self, now: Instant) {
+        if let Some(since) = self.since.take() {
+            info!(kind = "device_recovered", down_for_ms = now.saturating_duration_since(since).as_millis() as u64,
+                  failures = self.failures, "ArtNet sends go out again");
+        }
+        self.failures = 0;
+        self.warned = false;
     }
 }
 
@@ -559,5 +626,44 @@ impl Universe {
         self.modified = false;
         self.non_modified_ticks = 0;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod send_outage_tests {
+    use super::SendOutage;
+    use crate::test_log::capture;
+    use std::time::{Duration, Instant};
+    use tracing::Level;
+
+    /// Sends that keep failing — the node's network gone, a tick every 50 ms — are one episode in
+    /// the log: one INFO `device_connection_lost`, one WARN `device_unreachable` past 30 s, and one
+    /// INFO `device_recovered` with its length when a packet goes out again. Never `external_failure`
+    /// per tick, as the publisher logged each one (Store no-hang 3b, round 2).
+    #[test]
+    fn failing_sends_are_one_outage_episode() {
+        let mut outage = SendOutage::default();
+        let start = Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        let events = capture(|| {
+            for ms in (0..40_000).step_by(50) {
+                outage.failed_at(at(ms), "No route to host");
+            }
+            outage.sent_at(at(40_000));
+            outage.sent_at(at(40_050));
+        });
+        let of = |level: Level, kind: &str| events.iter().filter(|e| e.level == level && e.kind() == Some(kind)).count();
+        assert_eq!(of(Level::INFO, "device_connection_lost"), 1, "not one INFO as the sends began to fail: {events:#?}");
+        assert_eq!(of(Level::DEBUG, "device_connection_lost"), 799, "the later failures are not DEBUG");
+        let warns: Vec<_> = events.iter().filter(|e| e.level <= Level::WARN).collect();
+        assert!(
+            warns.len() == 1 && warns[0].kind() == Some("device_unreachable") && warns[0].field("down_for_ms") == Some("30000"),
+            "not one WARN device_unreachable once the sends had failed for 30 s: {warns:#?}"
+        );
+        let recovered: Vec<_> = events.iter().filter(|e| e.level == Level::INFO && e.kind() == Some("device_recovered")).collect();
+        assert!(
+            recovered.len() == 1 && recovered[0].field("down_for_ms") == Some("40000"),
+            "not one INFO device_recovered with the outage's length: {recovered:#?}"
+        );
     }
 }
