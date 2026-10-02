@@ -32,12 +32,15 @@ async fn main() {
             .unwrap_or_else(|| "dmx_config".to_string()),
     );
 
+    // Keep the guard for all of main: dropping it shuts down tracing-init's OpenTelemetry providers
+    // (guard.rs), so spans and OTLP logs would stop right after startup.
     let d = tracing_init::TracingInit::builder("mqtt_dmx")
         .log_to_file(true)
         .log_to_gelf_server(true)
         .file_prefix("dmx")
         .file_path("logs")
-        .init().map(|t| format!("{t}")).unwrap();
+        .init()
+        .unwrap();
 
     println!("Logging: {}", d);
     info!("Starting {}", get_version());
