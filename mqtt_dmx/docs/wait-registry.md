@@ -32,7 +32,9 @@ The **pump** (`Pump::start`) polls rumqttc's event loop and forwards incoming pu
 queueing error reports; the **publisher** (`mqtt_publisher::session`) publishes those reports; the
 **ArtNet manager** ticks every 50 ms, sending DMX and queueing its own error reports; the **array
 manager** answers questions about arrays and effects. `Service::mqtt_session` runs one connection,
-and `Service::mqtt` reconnects. The wait graph runs subscriber → managers, subscriber → publisher →
+and `Service::mqtt` reconnects, keeping the broker's outage state across sessions (`Outage`, atomics
+only, which each session's pump tells of a CONNACK). `main` waits for SIGTERM or SIGINT and stops
+the service within a bound. The wait graph runs subscriber → managers, subscriber → publisher →
 request channel → pump, and nothing waits back on the subscriber; the pump waits on nothing here.
 
 ## The rows
