@@ -31,7 +31,8 @@ impl Backlog {
     fn pushed(&self) {
         let depth = self.depth.fetch_add(1, Ordering::SeqCst) + 1;
         if depth >= HIGH_WATER {
-            let mut high = self.high_since.lock().unwrap_or_else(|p| p.into_inner()); // WAIT: mqtt-backlog-lock
+            // WAIT: mqtt-backlog-lock
+            let mut high = self.high_since.lock().unwrap_or_else(|p| p.into_inner());
             if high.is_none() {
                 *high = Some(Instant::now());
                 warn!(kind = "mqtt_backlog_high", depth, "MQTT commands are arriving faster than the bridge handles them");
@@ -42,7 +43,8 @@ impl Backlog {
     fn popped(&self) {
         let depth = self.depth.fetch_sub(1, Ordering::SeqCst) - 1;
         if depth <= LOW_WATER {
-            let mut high = self.high_since.lock().unwrap_or_else(|p| p.into_inner()); // WAIT: mqtt-backlog-lock
+            // WAIT: mqtt-backlog-lock
+            let mut high = self.high_since.lock().unwrap_or_else(|p| p.into_inner());
             if let Some(since) = high.take() {
                 info!(kind = "mqtt_backlog_drained", depth, lasted_ms = since.elapsed().as_millis() as u64, "MQTT command backlog drained");
             }
@@ -72,7 +74,8 @@ pub struct Incoming {
 
 impl Incoming {
     pub async fn recv(&mut self) -> Option<PumpEvent> {
-        let event = self.rx.recv().await; // WAIT: mqtt-pump-queue
+        // WAIT: mqtt-pump-queue
+        let event = self.rx.recv().await;
         if matches!(event, Some(PumpEvent::Publish(_))) {
             self.backlog.popped();
         }
@@ -87,7 +90,8 @@ impl Pump {
         let pushed = backlog.clone();
         let task = tokio::spawn(async move {
             loop {
-                match events.poll().await { // WAIT: mqtt-poll
+                // WAIT: mqtt-poll
+                match events.poll().await {
                     Ok(Event::Incoming(Packet::Publish(publish))) => {
                         pushed.pushed();
                         if tx.send(PumpEvent::Publish(publish)).is_err() {

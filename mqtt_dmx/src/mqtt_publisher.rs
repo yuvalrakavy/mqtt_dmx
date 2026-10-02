@@ -28,7 +28,8 @@ pub async fn session(mqtt_client: AsyncClient, to_mqtt_publisher_rx: Receiver<To
     let into_context = || MqttError::Context("In MQTT publisher session".to_string());
 
     loop {
-        match to_mqtt_publisher_rx.recv().await.change_context_lazy(into_context)? { // WAIT: error-queue-recv
+        // WAIT: error-queue-recv
+        match to_mqtt_publisher_rx.recv().await.change_context_lazy(into_context)? {
             ToMqttPublisherMessage::Error(error) => {
                 let error_message_body = MqttErrorMessageBody {
                     time: chrono::Utc::now().to_rfc3339(),
@@ -43,11 +44,15 @@ pub async fn session(mqtt_client: AsyncClient, to_mqtt_publisher_rx: Receiver<To
                 // Not the poller: these wait on rumqttc's request channel, which the pump drains
                 // (no-hang §14.3).
                 if let Some(props) = build_publish_properties() {
-                    mqtt_client.publish_with_properties("DMX/LastError", QoS::AtLeastOnce, true, error_message_body.clone(), props.clone()).await.change_context_lazy(into_context)?; // WAIT: mqtt-request
-                    mqtt_client.publish_with_properties("DMX/Error", QoS::AtLeastOnce, false, error_message_body, props).await.change_context_lazy(into_context)?; // WAIT: mqtt-request
+                    // WAIT: mqtt-request
+                    mqtt_client.publish_with_properties("DMX/LastError", QoS::AtLeastOnce, true, error_message_body.clone(), props.clone()).await.change_context_lazy(into_context)?;
+                    // WAIT: mqtt-request
+                    mqtt_client.publish_with_properties("DMX/Error", QoS::AtLeastOnce, false, error_message_body, props).await.change_context_lazy(into_context)?;
                 } else {
-                    mqtt_client.publish("DMX/LastError", QoS::AtLeastOnce, true, error_message_body.clone()).await.change_context_lazy(into_context)?; // WAIT: mqtt-request
-                    mqtt_client.publish("DMX/Error", QoS::AtLeastOnce, false, error_message_body).await.change_context_lazy(into_context)?; // WAIT: mqtt-request
+                    // WAIT: mqtt-request
+                    mqtt_client.publish("DMX/LastError", QoS::AtLeastOnce, true, error_message_body.clone()).await.change_context_lazy(into_context)?;
+                    // WAIT: mqtt-request
+                    mqtt_client.publish("DMX/Error", QoS::AtLeastOnce, false, error_message_body).await.change_context_lazy(into_context)?;
                 }
             }
         }

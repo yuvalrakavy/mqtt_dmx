@@ -263,7 +263,8 @@ impl ArtnetManager {
         let mut tick_timer = interval(TICK_DURATION);
 
         loop {
-            select! { // WAIT: artnet-loop
+            // WAIT: artnet-loop
+            select! {
                 _ = cancel.cancelled() => break,
 
                 _ = tick_timer.tick() => {

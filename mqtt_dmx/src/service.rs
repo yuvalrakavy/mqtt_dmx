@@ -175,8 +175,10 @@ impl Service {
         // Until either the publisher or the subscriber ends. A failed connection ends both: the
         // pump hands the subscriber `Ended` and drops the event loop, so a publish waiting on the
         // request channel fails.
-        let _ = mqtt_workers.join_next().await; // WAIT: mqtt-workers
-        mqtt_workers.shutdown().await; // WAIT: task-shutdown
+        // WAIT: mqtt-workers
+        let _ = mqtt_workers.join_next().await;
+        // WAIT: task-shutdown
+        mqtt_workers.shutdown().await;
 
         Ok(())
     }
@@ -276,7 +278,8 @@ impl Service<Stopped> {
                 .await
                 .is_ok()
             {
-                if let Ok(Err(e)) = rx.await { // WAIT: artnet-reply
+                // WAIT: artnet-reply
+                if let Ok(Err(e)) = rx.await {
                     error!(kind = "decode_error", universe_id = %universe_id, error = ?e,
                            "failed to restore persisted universe");
                 }
@@ -295,7 +298,8 @@ impl Service<Stopped> {
                 .await
                 .is_ok()
             {
-                if let Ok(Err(e)) = rx.await { // WAIT: array-reply
+                // WAIT: array-reply
+                if let Ok(Err(e)) = rx.await {
                     error!(kind = "decode_error", array_id = %array_id, error = ?e,
                            "failed to restore persisted array");
                 }
@@ -314,7 +318,8 @@ impl Service<Stopped> {
                 .await
                 .is_ok()
             {
-                if let Ok(Err(e)) = rx.await { // WAIT: array-reply
+                // WAIT: array-reply
+                if let Ok(Err(e)) = rx.await {
                     error!(kind = "decode_error", effect_id = %effect_id, error = ?e,
                            "failed to restore persisted effect");
                 }
@@ -333,7 +338,8 @@ impl Service<Stopped> {
                 .await
                 .is_ok()
             {
-                if let Ok(Err(e)) = rx.await { // WAIT: array-reply
+                // WAIT: array-reply
+                if let Ok(Err(e)) = rx.await {
                     error!(kind = "decode_error", value_name = %value_name, error = ?e,
                            "failed to restore persisted value");
                 }
@@ -369,7 +375,8 @@ impl Service<Started> {
         if let Some(cancel) = self.cancel.take() {
             cancel.cancel();
         }
-        self.workers.shutdown().await; // WAIT: task-shutdown
+        // WAIT: task-shutdown
+        self.workers.shutdown().await;
         info!("Service stopped");
 
         Service {

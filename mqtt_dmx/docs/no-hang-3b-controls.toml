@@ -49,12 +49,24 @@ guard       = "backlog_high_water"
 [[control]]
 name        = "a_wait_loses_its_tag"
 file        = "src/mqtt_publisher.rs"
-anchor      = '''props.clone()).await.change_context_lazy(into_context)?; // WAIT: mqtt-request'''
-replacement = '''props.clone()).await.change_context_lazy(into_context)?;'''
+anchor      = '''                    // WAIT: mqtt-request
+                    mqtt_client.publish_with_properties("DMX/LastError",'''
+replacement = '''                    mqtt_client.publish_with_properties("DMX/LastError",'''
 target      = "command"
 argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--test", "wait_registry"]
 expect_text = "is an untagged wait"
 guard       = "registry_wired"
+
+[[control]]
+name        = "a_tag_trails_its_code"
+file        = "src/mqtt_pump.rs"
+anchor      = '''                // WAIT: mqtt-poll
+                match events.poll().await {'''
+replacement = '''                match events.poll().await { // WAIT: mqtt-poll'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--test", "wait_registry", "--", "every_tag_is_on_its_own_line"]
+expect_text = "tag trails code on its line"
+guard       = "tags_survive_rustfmt"
 
 [[control]]
 name        = "a_collision_is_undeclared"

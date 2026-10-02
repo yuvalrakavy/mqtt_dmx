@@ -58,7 +58,8 @@ async fn main() {
     // By path: the wait lint takes methods named `start` and `stop` for a dependency's.
     let service = service::Service::start(service).await;
 
-    tokio::signal::ctrl_c().await.unwrap(); // WAIT: ctrl-c
+    // WAIT: ctrl-c
+    tokio::signal::ctrl_c().await.unwrap();
     let _ = service::Service::stop(service).await;
 }
 
