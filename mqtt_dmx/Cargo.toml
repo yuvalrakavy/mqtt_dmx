@@ -30,6 +30,9 @@ built = { version= "0.8.0", features = ["chrono"] }
 # The fleet's test tools, from the same repository as tracing-init (one revision for all three).
 wait-lint = { git="http://github.com/yuvalrakavy/tracing-init.git" }
 mqtt-test-broker = { git="http://github.com/yuvalrakavy/tracing-init.git" }
+# Captures log events in the tests that assert on logging (src/test_log.rs); the version
+# tracing-init already brings in.
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
 
 # to run with logging use
 #  RUST_LOG=trace,rumqttc=off mqtt_ac ...

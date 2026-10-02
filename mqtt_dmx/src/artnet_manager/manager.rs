@@ -6,7 +6,7 @@ use std::{
     mem,
     net::{IpAddr, UdpSocket},
     sync::{Arc, Weak},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::{select, sync::mpsc::Receiver, time::interval};
 use tokio_util::sync::CancellationToken;
@@ -264,6 +264,7 @@ impl ArtnetManager {
     ) {
         // Set tick timer
         let mut tick_timer = interval(TICK_DURATION);
+        let mut reporter = Reporter::new(to_mqtt_publisher);
 
         'run: loop {
             // WAIT: artnet-loop
@@ -272,16 +273,18 @@ impl ArtnetManager {
 
                 _ = tick_timer.tick() => {
                     for (effect_id, e) in self.tick() {
-                        if !report(&to_mqtt_publisher, format!("Effect {effect_id}: {e}")) {
+                        if !reporter.report(format!("Effect {effect_id}: {e}")) {
                             break 'run;
                         }
                     }
 
                     if let Err(e) = self.send_modified_universes() {
-                        if !report(&to_mqtt_publisher, e.to_string()) {
+                        if !reporter.report(e.to_string()) {
                             break;
                         }
                     }
+
+                    reporter.tick();
                 },
 
                 message = receiver.recv() => match message {
@@ -295,20 +298,58 @@ impl ArtnetManager {
     }
 }
 
-/// Hands an error report to the MQTT publisher without waiting (Store no-hang §14.3). The ticker
-/// never waits on MQTT: the commands that wait on its replies come through the MQTT session, and
-/// while the broker is slow, or the bridge is between sessions and nobody takes from the queue, a
-/// wait here would also freeze every running fade. With the queue full, the newest report
-/// displaces the oldest, which is logged here instead of published. `false` once the queue is
-/// closed.
-fn report(to_mqtt_publisher: &async_channel::Sender<ToMqttPublisherMessage>, error: String) -> bool {
-    match to_mqtt_publisher.force_send(ToMqttPublisherMessage::Error(error)) {
-        Ok(None) => true,
-        Ok(Some(ToMqttPublisherMessage::Error(displaced))) => {
-            warn!(kind = "external_failure", error = %displaced, "DMX error report dropped: the MQTT error queue is full");
-            true
+/// Hands the ArtNet manager's error reports to the MQTT publisher without waiting (Store no-hang
+/// §14.3). The ticker never waits on MQTT: the commands that wait on its replies come through the
+/// MQTT session, and while the broker is slow, or the bridge is between sessions and nobody takes
+/// from the queue, a wait here would also freeze every running fade.
+///
+/// With the queue full, the newest report displaces the oldest. A run of displaced reports is one
+/// episode: each report at DEBUG, one WARN when it starts, and an INFO with how many were dropped
+/// once the publisher has drained the queue to half (a fade failing at 20 ticks a second would
+/// otherwise be 20 WARNs a second).
+pub(super) struct Reporter {
+    to_mqtt_publisher: async_channel::Sender<ToMqttPublisherMessage>,
+    /// While reports are being dropped: since when, and how many so far.
+    dropping: Option<(Instant, u64)>,
+}
+
+impl Reporter {
+    pub(super) fn new(to_mqtt_publisher: async_channel::Sender<ToMqttPublisherMessage>) -> Reporter {
+        Reporter { to_mqtt_publisher, dropping: None }
+    }
+
+    /// Queues `error`, displacing the oldest report when the queue is full. `false` once the
+    /// queue is closed.
+    pub(super) fn report(&mut self, error: String) -> bool {
+        match self.to_mqtt_publisher.force_send(ToMqttPublisherMessage::Error(error)) {
+            Ok(None) => true,
+            Ok(Some(ToMqttPublisherMessage::Error(displaced))) => {
+                debug!(error = %displaced, "DMX error report dropped");
+                match &mut self.dropping {
+                    Some((_, dropped)) => *dropped += 1,
+                    None => {
+                        self.dropping = Some((Instant::now(), 1));
+                        warn!(kind = "error_report_dropped", queue = self.to_mqtt_publisher.capacity(),
+                              "DMX error reports are being dropped: the MQTT error queue is full");
+                    }
+                }
+                true
+            }
+            Err(_) => false,
         }
-        Err(_) => false,
+    }
+
+    /// Ends an episode of dropped reports once the publisher has drained the queue to half: an
+    /// INFO with its total. Called every tick.
+    pub(super) fn tick(&mut self) {
+        if let Some((since, dropped)) = self.dropping {
+            let half = self.to_mqtt_publisher.capacity().map_or(usize::MAX, |c| c / 2);
+            if self.to_mqtt_publisher.len() <= half {
+                self.dropping = None;
+                info!(kind = "error_report_drop_ended", dropped, lasted_ms = since.elapsed().as_millis() as u64,
+                      "DMX error reports reach the MQTT error queue again");
+            }
+        }
     }
 }
 

@@ -14,7 +14,7 @@ cargo clippy --target aarch64-apple-darwin --all-targets
 
 ## The MQTT loop (Store no-hang §14.3)
 
-rumqttc's request channel drains only while its event loop is polled, so the task that polls waits on nothing else. `Pump` (`mqtt_pump.rs`) polls and forwards incoming publishes on an unbounded queue (a WARN with `kind = "mqtt_backlog_high"` past 1000 unread, an INFO when it drains); the subscriber handles them, the publisher publishes error reports, and the ArtNet manager hands its own error reports over without waiting (`report`: with the queue full, the newest displaces the oldest). Every wait carries a `// WAIT: <row>` tag naming a row of `mqtt_dmx/docs/wait-registry.md`, which `tests/wait_registry.rs` checks; the negative controls are `mqtt_dmx/docs/no-hang-3b-controls.toml`.
+rumqttc's request channel drains only while its event loop is polled, so the task that polls waits on nothing else. `Pump` (`mqtt_pump.rs`) polls and forwards incoming publishes on an unbounded queue (a WARN with `kind = "mqtt_backlog_high"` past 1000 unread, an INFO when it drains); the subscriber handles them, the publisher publishes error reports, and the ArtNet manager hands its own error reports over without waiting (`Reporter`: with the queue full, the newest displaces the oldest — one WARN per episode, `kind = "error_report_dropped"`, and an INFO with the total once it drains). Every wait carries a `// WAIT: <row>` tag naming a row of `mqtt_dmx/docs/wait-registry.md`, which `tests/wait_registry.rs` checks; the negative controls are `mqtt_dmx/docs/no-hang-3b-controls.toml`.
 
 ## Logging
 

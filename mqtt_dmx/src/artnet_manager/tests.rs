@@ -291,6 +291,43 @@ mod test_artnet_manager {
 
     type ReplyTx = tokio::sync::oneshot::Sender<Result<(), Report<ArtnetError>>>;
 
+    /// Reports dropped from a full error queue are one WARN per episode, its own kind, each report
+    /// at DEBUG, and an INFO with the episode's total once the publisher has drained the queue
+    /// (Store no-hang 3b review, C-25: it was one WARN per dropped report, 20 a second during a
+    /// failing fade).
+    #[test]
+    fn a_full_error_queue_is_one_warn_per_episode_and_an_info_with_its_total_once_drained() {
+        use crate::artnet_manager::manager::Reporter;
+        use tracing::Level;
+
+        let (to_mqtt_publisher, reports) = async_channel::bounded::<ToMqttPublisherMessage>(2);
+        let mut reporter = Reporter::new(to_mqtt_publisher);
+        let events = crate::test_log::capture(|| {
+            for dropped in [5, 2] {
+                // Two fill the queue; each one after that displaces the oldest.
+                for n in 0..2 + dropped {
+                    assert!(reporter.report(format!("error {n}")));
+                    reporter.tick();
+                }
+                // The publisher catches up.
+                while reports.try_recv().is_ok() {}
+                reporter.tick();
+            }
+        });
+
+        let totals: Vec<_> = events
+            .iter()
+            .filter(|e| e.level == Level::INFO && e.kind() == Some("error_report_drop_ended"))
+            .map(|e| e.field("dropped").unwrap_or_default().to_string())
+            .collect();
+        assert_eq!(totals, ["5", "2"], "no INFO with each episode's total once the queue drained");
+        let warns: Vec<_> = events.iter().filter(|e| e.level <= Level::WARN).collect();
+        assert_eq!(warns.len(), 2, "not one WARN per episode of dropped reports: {warns:#?}");
+        assert!(warns.iter().all(|w| w.kind() == Some("error_report_dropped")), "a WARN without its own kind: {warns:#?}");
+        let each = events.iter().filter(|e| e.level == Level::DEBUG && e.message.contains("dropped")).count();
+        assert_eq!(each, 7, "the dropped reports are not each at DEBUG");
+    }
+
     /// An effect that counts its ticks and never finishes, like a long fade.
     #[derive(Debug)]
     struct CountsItsTicks(Arc<std::sync::atomic::AtomicUsize>);

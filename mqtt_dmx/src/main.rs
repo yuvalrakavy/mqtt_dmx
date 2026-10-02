@@ -10,6 +10,8 @@ mod array_manager;
 //mod effects_manager;
 mod messages;
 mod persistence;
+#[cfg(test)]
+mod test_log;
 
 use std::path::PathBuf;
 

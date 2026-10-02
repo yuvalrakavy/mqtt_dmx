@@ -25,8 +25,8 @@ guard       = "pump_waits_on_nothing"
 [[control]]
 name        = "the_artnet_ticker_waits_on_the_error_queue"
 file        = "src/artnet_manager/manager.rs"
-anchor      = '''                        if !report(&to_mqtt_publisher, format!("Effect {effect_id}: {e}")) {'''
-replacement = '''                        if to_mqtt_publisher.send(ToMqttPublisherMessage::Error(format!("Effect {effect_id}: {e}"))).await.is_err() {'''
+anchor      = '''                        if !reporter.report(format!("Effect {effect_id}: {e}")) {'''
+replacement = '''                        if reporter.to_mqtt_publisher.send(ToMqttPublisherMessage::Error(format!("Effect {effect_id}: {e}"))).await.is_err() {'''
 target      = "command"
 argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "the_ticker_keeps_answering_while_the_mqtt_error_queue_is_full"]
 expect_text = "the ArtNet manager stopped answering while the MQTT error queue was full"
@@ -46,6 +46,29 @@ target      = "command"
 argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "a_failing_effect_does_not_stop_the_others"]
 expect_text = "a failing effect stopped the healthy one"
 guard       = "effects_fail_alone"
+
+[[control]]
+name        = "every_dropped_report_is_a_warn"
+file        = "src/artnet_manager/manager.rs"
+anchor      = '''                    Some((_, dropped)) => *dropped += 1,'''
+replacement = '''                    Some((_, dropped)) => {
+                        *dropped += 1;
+                        warn!(kind = "error_report_dropped", "control: a WARN per dropped report");
+                    }'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "a_full_error_queue_is_one_warn_per_episode"]
+expect_text = "not one WARN per episode of dropped reports"
+guard       = "dropped_reports_one_warn"
+
+[[control]]
+name        = "a_drop_episode_never_ends"
+file        = "src/artnet_manager/manager.rs"
+anchor      = '''            if self.to_mqtt_publisher.len() <= half {'''
+replacement = '''            if self.to_mqtt_publisher.len() <= half && half == usize::MAX {'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "a_full_error_queue_is_one_warn_per_episode"]
+expect_text = "no INFO with each episode's total once the queue drained"
+guard       = "dropped_reports_drain_info"
 
 [[control]]
 name        = "the_backlog_never_raises_its_warn"
