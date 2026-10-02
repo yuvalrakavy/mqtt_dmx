@@ -694,7 +694,7 @@ dependencies = [
 [[package]]
 name = "mqtt-test-broker"
 version = "0.1.0"
-source = "git+http://github.com/yuvalrakavy/tracing-init.git#edfd0b9648438c04db0cd1e8227c4be7a1c19e53"
+source = "git+http://github.com/yuvalrakavy/tracing-init.git#5ee564dcd60389bc22e19fe41876dfebb5a3b3a7"
 dependencies = [
  "bytes",
  "rumqttc",
@@ -1625,7 +1625,7 @@ dependencies = [
 [[package]]
 name = "tracing-init"
 version = "0.2.0"
-source = "git+http://github.com/yuvalrakavy/tracing-init.git#edfd0b9648438c04db0cd1e8227c4be7a1c19e53"
+source = "git+http://github.com/yuvalrakavy/tracing-init.git#5ee564dcd60389bc22e19fe41876dfebb5a3b3a7"
 dependencies = [
  "bitflags",
  "futures-util",
@@ -1749,7 +1749,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 [[package]]
 name = "wait-lint"
 version = "0.1.0"
-source = "git+http://github.com/yuvalrakavy/tracing-init.git#edfd0b9648438c04db0cd1e8227c4be7a1c19e53"
+source = "git+http://github.com/yuvalrakavy/tracing-init.git#5ee564dcd60389bc22e19fe41876dfebb5a3b3a7"
 dependencies = [
  "proc-macro2",
  "syn",
