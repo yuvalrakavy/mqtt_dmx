@@ -10,6 +10,7 @@ use std::time::Duration;
 use mqtt_test_broker::FakeBroker;
 
 use super::{broker_host_port, Service, ServiceConfig, Started};
+use crate::persistence::Persistence;
 
 fn storage(tag: &str) -> PathBuf {
     std::env::temp_dir().join(format!("mqtt-dmx-{tag}-{}", std::process::id()))
@@ -76,7 +77,7 @@ async fn a_burst_of_failing_commands_against_a_stalled_broker_reports_every_erro
 }
 
 /// An array on a universe that does not exist: every effect started on it fails its first ArtNet
-/// tick, an error report from the ArtNet manager.
+/// tick, an error report from the ArtNet manager — while the command that started it succeeds.
 const GHOST_ARRAY: &str = r#"{
     "universe_id": "Ghost",
     "description": "An array on a universe nobody defined",
@@ -84,40 +85,79 @@ const GHOST_ARRAY: &str = r#"{
     "effects": { "on": { "type": "fade", "lights": "@all", "ticks": 4, "target": "s(255)" } }
 }"#;
 
-/// Valid commands that wait on the ArtNet manager, while the broker withholds its acks and the
-/// ArtNet manager's own error reports back up behind the stalled publisher. Once the broker
-/// recovers the bridge must take commands again. A poller that waits on the ArtNet manager's reply,
-/// while the ArtNet manager waits on the error queue, never polls again.
+/// A universe on loopback that never sends. Adding one is a command the ArtNet manager must answer
+/// and the subscriber then persists — no error report anywhere, so it never touches the error
+/// queue, the publisher or the broker, and its completion is seen in the bridge's storage.
+const PROBE_UNIVERSE: &str = r#"{
+    "description": "A probe", "controller": "127.0.0.1", "net": 0, "subnet": 0, "universe": 0,
+    "channels": 8, "disable_send": true
+}"#;
+
+/// Waits until `ready()` holds, or `within` passes. Returns whether it held.
+async fn eventually(within: Duration, ready: impl Fn() -> bool) -> bool {
+    let deadline = tokio::time::Instant::now() + within;
+    while !ready() {
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    true
+}
+
+fn persisted_universe(tag: &str, id: &str) -> bool {
+    Persistence::new(storage(tag)).load_universes().contains_key(id)
+}
+
+/// The ArtNet manager's error reports back up behind a stalled publisher — the broker withholds its
+/// acks — while the bridge must go on taking commands the ArtNet manager answers. Every command here
+/// succeeds at the subscriber, so none of them waits on the error queue itself: what is measured is
+/// the ArtNet manager. One that waits on the error queue once it is full stops answering, and the
+/// subscriber, waiting on its reply, takes no command until the broker recovers.
 #[tokio::test(flavor = "multi_thread")]
-async fn commands_that_wait_on_artnet_while_its_errors_back_up_complete_once_the_broker_recovers() {
-    const EFFECTS: usize = 30;
+async fn commands_that_wait_on_artnet_complete_while_its_errors_back_up_behind_a_stalled_broker() {
+    // Each failed effect is one report, two QoS 1 publishes: two in flight, ten in rumqttc's request
+    // channel, one in the publisher's hands and ten in the error queue are 18 reports, so 30 fill
+    // everything with room to spare.
+    const FAILURES: usize = 30;
     let broker = FakeBroker::start_with_receive_max(2).await;
     let service = start_bridge(&broker, "artnet").await;
     let test = async {
         assert!(broker.send("DMX/Array/Ghost", GHOST_ARRAY));
+        assert!(
+            eventually(Duration::from_secs(5), || Persistence::new(storage("artnet")).load_arrays().contains_key("Ghost")).await,
+            "the bridge never took the array"
+        );
         broker.hold_acks();
-        for _ in 0..EFFECTS {
+        for _ in 0..FAILURES {
             assert!(broker.send("DMX/Command/On", r#"{"array_id": "Ghost"}"#));
             // One failed tick per command: the ArtNet manager ticks every 50 ms.
             tokio::time::sleep(Duration::from_millis(80)).await;
         }
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert!(broker.held_acks() >= 2, "the broker never stalled: it holds {} acks", broker.held_acks());
+
+        // Still stalled: a command the ArtNet manager must answer.
+        assert!(broker.send("DMX/Universe/Probe1", PROBE_UNIVERSE));
+        assert!(
+            eventually(Duration::from_secs(5), || persisted_universe("artnet", "Probe1")).await,
+            "the bridge stopped taking commands while the broker was stalled — the ArtNet manager waited on the full \
+             error queue to the stalled publisher, and the subscriber on the ArtNet manager"
+        );
+
+        // Recovered: it still takes them.
         broker.release_acks();
-        // A command whose own error report shows the bridge takes commands again.
-        assert!(broker.send("DMX/Sentinel", "{}"));
-        let done = broker
-            .wait_until(Duration::from_secs(20), |b| {
-                b.received_on("DMX/Error").iter().any(|r| String::from_utf8_lossy(&r.payload).contains("Sentinel"))
+        assert!(broker.send("DMX/Universe/Probe2", PROBE_UNIVERSE));
+        assert!(
+            eventually(Duration::from_secs(10), || persisted_universe("artnet", "Probe2")).await,
+            "the bridge took no command after the broker recovered"
+        );
+        let reported = broker
+            .wait_until(Duration::from_secs(10), |b| {
+                b.received_on("DMX/Error").iter().any(|r| String::from_utf8_lossy(&r.payload).contains("No universe with ID 'Ghost'"))
             })
             .await;
         assert!(
-            done,
-            "the bridge took no command after the broker recovered ({} error reports arrived) — the poller waited on \
-             ArtNet work, which waited on the error queue to the stalled publisher",
-            error_reports(&broker).len()
-        );
-        assert!(
-            error_reports(&broker).iter().any(|r| r.contains("No universe with ID 'Ghost'")),
+            reported,
             "no ArtNet error report arrived, so the ArtNet manager's error path was not exercised: {:?}",
             error_reports(&broker)
         );

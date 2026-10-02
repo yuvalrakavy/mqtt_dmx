@@ -1,10 +1,12 @@
 # Negative controls for mqtt_dmx's no-hang 3b change (Store no-hang §14). Run from Store with
 #     scripts/negative-control.py --root ../Home/mqtt_dmx-3b/mqtt_dmx ../Home/mqtt_dmx-3b/mqtt_dmx/docs/no-hang-3b-controls.toml
-# (The saturation tests' own controls are the failing-first runs on the old session: the burst
-# reported 1 of 100 error reports after the broker recovered; the ArtNet path took no command
-# after it recovered; the ArtNet manager stopped answering with its error queue full. The ArtNet
-# path's session test needs both fixes reverted to go red — either one breaks that cycle — so it
-# has no one-mutation row here.)
+# (The saturation tests' failing-first runs on the old session: the burst reported 1 of 100 error
+# reports after the broker recovered; the ArtNet manager stopped answering with its error queue
+# full. The ArtNet path's session test once used a failing command as its sentinel, which waits on
+# the error queue itself, so it went green with the ArtNet fix alone reverted (the pump fix alone
+# breaks that cycle). It now measures the bridge with commands that report no error, during the
+# stall and after it, and the_artnet_ticker_waits_on_the_error_queue_in_a_session reverts the
+# ArtNet fix alone.)
 
 [[control]]
 name        = "the_pump_waits_on_the_subscriber"
@@ -31,6 +33,16 @@ target      = "command"
 argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "the_ticker_keeps_answering_while_the_mqtt_error_queue_is_full"]
 expect_text = "the ArtNet manager stopped answering while the MQTT error queue was full"
 guard       = "artnet_never_waits_on_mqtt"
+
+[[control]]
+name        = "the_artnet_ticker_waits_on_the_error_queue_in_a_session"
+file        = "src/artnet_manager/manager.rs"
+anchor      = '''                        if !reporter.report(format!("Effect {effect_id}: {e}")) {'''
+replacement = '''                        if reporter.to_mqtt_publisher.send(ToMqttPublisherMessage::Error(format!("Effect {effect_id}: {e}"))).await.is_err() {'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "commands_that_wait_on_artnet_complete_while_its_errors_back_up"]
+expect_text = "the bridge stopped taking commands while the broker was stalled"
+guard       = "bridge_answers_while_the_broker_stalls"
 
 [[control]]
 name        = "a_failing_effect_drops_every_running_effect"
