@@ -1,6 +1,7 @@
 
 mod service;
 mod defs;
+mod mqtt_outage;
 mod mqtt_publisher;
 mod mqtt_pump;
 mod mqtt_subscriber;

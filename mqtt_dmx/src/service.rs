@@ -12,6 +12,7 @@ use crate::{
     artnet_manager::ArtnetManager,
     get_version,
     messages::{self, ToArtnetManagerMessage},
+    mqtt_outage::Outage,
     mqtt_publisher,
     mqtt_pump::Pump,
     mqtt_subscriber,
@@ -20,6 +21,9 @@ use crate::{
 
 /// The bridge's liveness: `true` while it is connected, `false` from its last will.
 const ACTIVE_TOPIC: &str = "DMX/Active";
+
+/// How long after a session ends the next one starts.
+const RECONNECT_AFTER: Duration = Duration::from_secs(10);
 
 pub struct Started {}
 pub struct Stopped {}
@@ -148,10 +152,11 @@ impl Service {
         to_mqtt_publisher_rx: async_channel::Receiver<messages::ToMqttPublisherMessage>,
         to_mqtt_publisher_tx: async_channel::Sender<messages::ToMqttPublisherMessage>,
         persistence: Arc<Persistence>,
+        outage: Arc<Outage>,
     ) -> Result<(), Report<MqttError>> {
         let (mqtt_client, mqtt_event_loop) = Service::mqtt_client(broker_address);
         // Polling first, so every publish below has an event loop draining it.
-        let (_pump, incoming) = Pump::start(mqtt_event_loop);
+        let (_pump, incoming) = Pump::start(mqtt_event_loop, outage);
         Service::announce(&mqtt_client, broker_address).await?;
 
         let mut mqtt_workers = JoinSet::new();
@@ -191,6 +196,8 @@ impl Service {
         to_mqtt_publisher_tx: async_channel::Sender<messages::ToMqttPublisherMessage>,
         persistence: Arc<Persistence>,
     ) {
+        // Outlives every session: an outage spans many.
+        let outage = Arc::new(Outage::new());
         loop {
             let _ = Self::mqtt_session(
                     broker_address,
@@ -199,11 +206,12 @@ impl Service {
                     to_mqtt_publisher_rx.clone(),
                     to_mqtt_publisher_tx.clone(),
                     persistence.clone(),
+                    outage.clone(),
                 )
                 .await;
 
-            info!(kind = "connection_lost", "MQTT session ended, restarting in 10 seconds");
-            tokio::time::sleep(Duration::from_secs(10)).await;
+            outage.session_ended(RECONNECT_AFTER);
+            tokio::time::sleep(RECONNECT_AFTER).await;
         }
     }
 }

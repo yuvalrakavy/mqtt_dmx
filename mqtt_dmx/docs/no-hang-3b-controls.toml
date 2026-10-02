@@ -159,3 +159,23 @@ target      = "command"
 argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--test", "wait_registry"]
 expect_text = "`.handle_message(..).await` on a receiver other than `self`"
 guard       = "collision_declared"
+
+[[control]]
+name        = "an_outage_warns_at_every_attempt"
+file        = "src/mqtt_outage.rs"
+anchor      = '''        if down_for_ms >= WARN_AFTER.as_millis() as u64 && !self.warned.swap(true, Ordering::SeqCst)'''
+replacement = '''        if down_for_ms >= WARN_AFTER.as_millis() as u64'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "an_outage_is_info_per_attempt"]
+expect_text = "not one WARN for the long outage alone"
+guard       = "outage_one_warn"
+
+[[control]]
+name        = "a_recovery_goes_unlogged"
+file        = "src/mqtt_outage.rs"
+anchor      = '''        if since != 0 {'''
+replacement = '''        if since != 0 && since == 0 {'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "an_outage_is_info_per_attempt"]
+expect_text = "no INFO with each outage's length when it ended"
+guard       = "outage_recovery_info"

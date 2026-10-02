@@ -8,6 +8,8 @@ use rumqttc::v5::mqttbytes::v5::{Packet, Publish};
 use rumqttc::v5::{Event, EventLoop};
 use tracing::{info, warn};
 
+use crate::mqtt_outage::Outage;
+
 /// What the pump hands the subscriber.
 pub enum PumpEvent {
     Publish(Publish),
@@ -120,7 +122,8 @@ impl Incoming {
 }
 
 impl Pump {
-    pub fn start(mut events: EventLoop) -> (Pump, Incoming) {
+    /// `outage` hears when the broker accepts the connection.
+    pub fn start(mut events: EventLoop, outage: Arc<Outage>) -> (Pump, Incoming) {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let backlog = Arc::new(Backlog::default());
         let pushed = backlog.clone();
@@ -134,6 +137,7 @@ impl Pump {
                             return; // the subscriber is gone
                         }
                     }
+                    Ok(Event::Incoming(Packet::ConnAck(_))) => outage.connected(),
                     Ok(_) => {}
                     Err(e) => {
                         let _ = tx.send(PumpEvent::Ended(e.to_string()));
