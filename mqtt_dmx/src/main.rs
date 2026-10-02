@@ -137,6 +137,7 @@ async fn run(mqtt_broker_address: String, storage_path: PathBuf) -> Option<traci
 /// The guard is kept for all of main: dropping it shuts down tracing-init's writers and
 /// OpenTelemetry providers (guard.rs), so the log would stop.
 fn start_logging() -> Option<tracing_init::TracingGuard> {
+    logging_gate();
     match tracing_init::TracingInit::builder("mqtt_dmx")
         .log_to_file(true)
         .log_to_gelf_server(true)
@@ -152,6 +153,20 @@ fn start_logging() -> Option<tracing_init::TracingGuard> {
         }
     }
 }
+
+/// A test seam, in debug builds only: `MQTT_DMX_TEST_LOGGING_GATE` names a file the logging start reads before
+/// anything else, so a process test can hold the start — a FIFO it keeps open — where it can prove
+/// the start began and is still waiting, and that a stop ends the bridge anyway (Store no-hang 3b
+/// review round 3, B1). Inert unless the variable is set; compiled out of release builds.
+#[cfg(debug_assertions)]
+fn logging_gate() {
+    if let Some(gate) = std::env::var_os("MQTT_DMX_TEST_LOGGING_GATE") {
+        let _ = std::fs::read(gate);
+    }
+}
+
+#[cfg(not(debug_assertions))]
+fn logging_gate() {}
 
 /// SIGTERM — systemd's stop — and SIGINT (Ctrl-C): either one stops the bridge through its bounded
 /// shutdown. Registered at once, by `install`, not on the first wait.

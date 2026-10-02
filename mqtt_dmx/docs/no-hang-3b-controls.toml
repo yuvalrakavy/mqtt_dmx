@@ -449,8 +449,8 @@ file        = "src/main.rs"
 anchor      = '''        _ = stop.recv() => return None,'''
 replacement = '''        _ = std::future::pending::<()>() => return None,'''
 target      = "command"
-argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--test", "process", "--", "a_stop_during_a_stalled_logging_start_is_prompt"]
-expect_text = "of SIGTERM while its logging start was stalled"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--test", "process", "--", "a_stop_during_a_held_logging_start_is_prompt"]
+expect_text = "of SIGTERM while its logging start was held"
 guard       = "logging_start_raced"
 
 # B2: the logging summary printed to stdout again, as it was.
@@ -514,3 +514,14 @@ target      = "command"
 argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "a_failed_save_is_kept_and_tried_again_at_a_pace"]
 expect_text = "the writer did not wait before trying again"
 guard       = "failed_save_paced"
+
+# F1 at process level: main drops the runtime, which waits for the held logging-start thread.
+[[control]]
+name        = "the_runtime_is_dropped_at_process_level"
+file        = "src/main.rs"
+anchor      = '''    runtime.shutdown_timeout(RUNTIME_DRAIN);'''
+replacement = '''    drop(runtime); // control: the dropped runtime waits for every stuck thread'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--test", "process", "--", "a_stop_during_a_held_logging_start_is_prompt"]
+expect_text = "of SIGTERM while its logging start was held"
+guard       = "runtime_shutdown_bounded_process"
