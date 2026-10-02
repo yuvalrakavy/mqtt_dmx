@@ -267,7 +267,8 @@ mod test_artnet_manager {
         assert!(result.is_ok());
     }
 
-    /// An effect whose every tick fails: one error report per effect started.
+    /// An effect whose every tick fails. Its first failure stops it (`ArtnetManager::tick`), so it
+    /// makes one error report, and the effects beside it run on.
     #[derive(Debug)]
     struct FailsItsTick(usize);
 
@@ -289,6 +290,40 @@ mod test_artnet_manager {
     }
 
     type ReplyTx = tokio::sync::oneshot::Sender<Result<(), Report<ArtnetError>>>;
+
+    /// An effect that counts its ticks and never finishes, like a long fade.
+    #[derive(Debug)]
+    struct CountsItsTicks(Arc<std::sync::atomic::AtomicUsize>);
+
+    impl EffectNodeRuntime for CountsItsTicks {
+        fn tick(&mut self, _: &mut ArtnetManager) -> Result<(), Report<ArtnetError>> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn is_done(&self) -> bool {
+            false
+        }
+    }
+
+    /// One effect failing its tick stops that effect alone, reported once: every other running
+    /// effect keeps ticking (Store no-hang 3b review, C-26 — the tick returned at the first
+    /// failure, and the effects it had taken out to run were never put back).
+    #[test]
+    fn a_failing_effect_does_not_stop_the_others() {
+        const TICKS: usize = 4;
+        let mut manager = ArtnetManager::new();
+        let ticked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        manager.start_effect("healthy", Box::new(CountsItsTicks(ticked.clone()))).unwrap();
+        manager.start_effect("failing", Box::new(FailsItsTick(0))).unwrap();
+        let failed: Vec<String> = (0..TICKS).flat_map(|_| manager.tick()).map(|(id, _)| id).collect();
+        assert_eq!(
+            ticked.load(std::sync::atomic::Ordering::SeqCst),
+            TICKS,
+            "a failing effect stopped the healthy one: it ticked fewer than {TICKS} times"
+        );
+        assert_eq!(failed, ["failing"], "the failing effect was not reported once, then stopped");
+    }
 
     /// The ArtNet manager never waits on MQTT (Store no-hang §14.3): with the error queue full —
     /// the broker slow, or the bridge between MQTT sessions, so nobody takes from it — it keeps

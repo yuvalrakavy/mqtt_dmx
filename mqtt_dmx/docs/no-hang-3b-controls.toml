@@ -25,14 +25,27 @@ guard       = "pump_waits_on_nothing"
 [[control]]
 name        = "the_artnet_ticker_waits_on_the_error_queue"
 file        = "src/artnet_manager/manager.rs"
-anchor      = '''                    if let Err(e) = self.tick() {
-                        if !report(&to_mqtt_publisher, e.to_string()) {'''
-replacement = '''                    if let Err(e) = self.tick() {
-                        if to_mqtt_publisher.send(ToMqttPublisherMessage::Error(e.to_string())).await.is_err() {'''
+anchor      = '''                        if !report(&to_mqtt_publisher, format!("Effect {effect_id}: {e}")) {'''
+replacement = '''                        if to_mqtt_publisher.send(ToMqttPublisherMessage::Error(format!("Effect {effect_id}: {e}"))).await.is_err() {'''
 target      = "command"
 argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "the_ticker_keeps_answering_while_the_mqtt_error_queue_is_full"]
 expect_text = "the ArtNet manager stopped answering while the MQTT error queue was full"
 guard       = "artnet_never_waits_on_mqtt"
+
+[[control]]
+name        = "a_failing_effect_drops_every_running_effect"
+file        = "src/artnet_manager/manager.rs"
+anchor      = '''        self.active_effects = active_effects; // Move it back
+        failed'''
+replacement = '''        // control: the old tick, which never put the effects back after a failure
+        if failed.is_empty() {
+            self.active_effects = active_effects;
+        }
+        failed'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "a_failing_effect_does_not_stop_the_others"]
+expect_text = "a failing effect stopped the healthy one"
+guard       = "effects_fail_alone"
 
 [[control]]
 name        = "the_backlog_never_raises_its_warn"

@@ -117,7 +117,7 @@ impl ArtnetManager {
         Ok(())
     }
 
-    fn start_effect(
+    pub(super) fn start_effect(
         &mut self,
         effect_id: &str,
         effect: Box<dyn EffectNodeRuntime>,
@@ -133,25 +133,28 @@ impl ArtnetManager {
         Ok(())
     }
 
-    fn tick(&mut self) -> Result<(), Report<ArtnetError>> {
+    /// Ticks every running effect. An effect whose tick fails is stopped, and its id and error
+    /// returned; every other effect runs on. (It used to return at the first failure, and the
+    /// effects taken out to run were never put back: one bad effect stopped every fade.)
+    pub(super) fn tick(&mut self) -> Vec<(String, Report<ArtnetError>)> {
         let mut active_effects = mem::take(&mut self.active_effects);
-        let mut completed_effect: Vec<String> = Vec::new();
+        let mut failed = Vec::new();
 
-        for (effect_id, effect) in active_effects.iter_mut() {
-            effect.tick(self)?;
-
-            if effect.is_done() {
-                completed_effect.push(effect_id.clone());
+        active_effects.retain(|effect_id, effect| match effect.tick(self) {
+            Ok(()) if effect.is_done() => {
+                trace!("Effect {} completed", effect_id);
+                false
             }
-        }
-
-        for id in completed_effect {
-            trace!("Effect {} completed", id);
-            active_effects.remove(&id);
-        }
+            Ok(()) => true,
+            Err(e) => {
+                info!(effect_id = %effect_id, error = %e, "Effect stopped: its tick failed");
+                failed.push((effect_id.clone(), e));
+                false
+            }
+        });
 
         self.active_effects = active_effects; // Move it back
-        Ok(())
+        failed
     }
 
     pub fn set_channel(&mut self, universe_id: &str, v: &ChannelValue) -> Result<(), Report<ArtnetError>> {
@@ -262,15 +265,15 @@ impl ArtnetManager {
         // Set tick timer
         let mut tick_timer = interval(TICK_DURATION);
 
-        loop {
+        'run: loop {
             // WAIT: artnet-loop
             select! {
                 _ = cancel.cancelled() => break,
 
                 _ = tick_timer.tick() => {
-                    if let Err(e) = self.tick() {
-                        if !report(&to_mqtt_publisher, e.to_string()) {
-                            break;
+                    for (effect_id, e) in self.tick() {
+                        if !report(&to_mqtt_publisher, format!("Effect {effect_id}: {e}")) {
+                            break 'run;
                         }
                     }
 
