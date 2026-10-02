@@ -46,6 +46,43 @@ fn a_broker_address_may_carry_its_port() {
     assert_eq!(broker_host_port("broker.local:x"), ("broker.local:x", 1883));
 }
 
+/// Stopping is bounded: a task that will not end — inside a synchronous call, where an abort cannot
+/// reach it — costs a WARN (`shutdown_timeout`), never a stop that waits on it (Store no-hang 3b
+/// review, C-7: SIGTERM now runs this stop, and systemd waits on it).
+#[test]
+fn stopping_is_bounded_when_a_task_will_not_end() {
+    const BOUND: Duration = Duration::from_millis(300);
+    const STUCK: Duration = Duration::from_secs(3);
+    let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
+    let mut took = Duration::ZERO;
+    let events = crate::test_log::capture(|| {
+        took = runtime.block_on(async {
+            let mut workers = tokio::task::JoinSet::new();
+            let (entered, inside) = tokio::sync::oneshot::channel();
+            workers.spawn(async move {
+                let _ = entered.send(());
+                std::thread::sleep(STUCK);
+            });
+            inside.await.expect("the stuck task started");
+            let service = Service::<Started> {
+                config: ServiceConfig { mqtt_broker_address: String::new(), storage_path: storage("stop") },
+                cancel: Some(tokio_util::sync::CancellationToken::new()),
+                workers,
+                _status: std::marker::PhantomData,
+            };
+            let started = std::time::Instant::now();
+            let _ = service.stop_within(BOUND).await;
+            started.elapsed()
+        });
+    });
+    runtime.shutdown_background();
+    assert!(took < STUCK / 2, "stopping waited {took:?} for a task stuck in a synchronous call");
+    assert!(
+        events.iter().any(|e| e.level == tracing::Level::WARN && e.kind() == Some("shutdown_timeout")),
+        "stopping ran past its bound without a WARN: {events:#?}"
+    );
+}
+
 /// A burst of commands the bridge cannot parse, while the broker withholds its acknowledgements:
 /// each is an error report, two QoS 1 publishes, so the request channel fills, then the error
 /// queue behind it. The acks are then released, and every report must arrive. A poller that sends

@@ -25,6 +25,9 @@ const ACTIVE_TOPIC: &str = "DMX/Active";
 /// How long after a session ends the next one starts.
 const RECONNECT_AFTER: Duration = Duration::from_secs(10);
 
+/// How long stopping the service may wait for its tasks to end.
+const STOP_WITHIN: Duration = Duration::from_secs(5);
+
 pub struct Started {}
 pub struct Stopped {}
 
@@ -379,12 +382,22 @@ impl Service<Stopped> {
 }
 
 impl Service<Started> {
-    pub async fn stop(mut self) -> Service<Stopped> {
+    pub async fn stop(self) -> Service<Stopped> {
+        self.stop_within(STOP_WITHIN).await
+    }
+
+    /// Cancels and aborts every task, waiting at most `bound` for them to end. A task inside a
+    /// synchronous call cannot be aborted until it returns; past the bound it is left behind, with
+    /// a WARN, and the stop goes on.
+    async fn stop_within(mut self, bound: Duration) -> Service<Stopped> {
         if let Some(cancel) = self.cancel.take() {
             cancel.cancel();
         }
-        // WAIT: task-shutdown
-        self.workers.shutdown().await;
+        // WAIT: service-stop
+        if tokio::time::timeout(bound, self.workers.shutdown()).await.is_err() {
+            warn!(kind = "shutdown_timeout", bound_ms = bound.as_millis() as u64, tasks = self.workers.len(),
+                  "Service stop timed out: a task did not end; stopping without it");
+        }
         info!("Service stopped");
 
         Service {

@@ -52,8 +52,9 @@ request channel → pump, and nothing waits back on the subscriber; the pump wai
 | `artnet-loop` | acyclic | the ArtNet manager's `select!`: its cancel token, its 50 ms tick, its command queue | The tick fires every 50 ms on its own, and the arms' bodies are synchronous (DMX state, non-blocking UDP sends, `Reporter`), so the loop waits on no other task. |
 | `array-loop` | acyclic | the array manager's `select!`: its cancel token, its command queue | The arms' bodies are synchronous; the loop waits on no other task. |
 | `mqtt-workers` | acyclic | the session's publisher or subscriber ending (`join_next`) | Neither worker waits on the session task. A failed connection ends both — the pump hands the subscriber `Ended`, and drops the event loop so a waiting publish fails — so a session ends when its poll fails (`mqtt-poll` says how long that can take). |
-| `task-shutdown` | acyclic | `JoinSet::shutdown`: aborting tasks, and waiting for them to end | Abort ends each task at its next await point, and no aborted task waits on the task shutting it down; a task inside a synchronous call (a persistence write) delays it by that call alone. Shutdown publishes nothing, so there is nothing to flush; the broker publishes the last will. |
-| `ctrl-c` | acyclic | the operating system's interrupt signal | Nothing in the bridge waits on `main`; the wait ends when the service is told to stop. |
+| `task-shutdown` | acyclic | `JoinSet::shutdown` of a session's publisher and subscriber: aborting them, and waiting for them to end | Abort ends each task at its next await point, and neither waits on the session task shutting it down; a task inside a synchronous call (a persistence write) delays it by that call alone. Shutdown publishes nothing, so there is nothing to flush; the broker publishes the last will. |
+| `service-stop` | bounded | `Service::stop_within`: the service's tasks — the ArtNet manager, the array manager, the MQTT loop — aborted, and waited for | Within 5 s (`STOP_WITHIN`). Abort ends each task at its next await point, and none of them waits on `main`, which stops them, so they end at once unless one is inside a synchronous call. On expiry: a WARN (`shutdown_timeout`, with the tasks left), and the stop returns; `main` then flushes the log by dropping its guard and returns. The runtime's own teardown can still wait for that task's call to return — systemd's stop timeout and SIGKILL bound it (`stopping_is_bounded_when_a_task_will_not_end`: failing first, the stop waited 3 s for a task in a 3 s synchronous call; now 0.3 s and a WARN). |
+| `stop-signal` | acyclic | SIGTERM or SIGINT from the operating system (`StopSignals::recv`) | Nothing in the bridge waits on `main`, so nothing here can wait back on it; the wait ends when systemd (SIGTERM) or an operator (SIGINT) stops the bridge, and the handlers are registered before the service starts, so neither signal ends the process unhandled (`sigterm_stops_the_bridge_through_its_shutdown`: failing first, SIGTERM killed it). If they cannot be registered, the wait never ends and the signals' default action ends the process, as before. |
 
 ## Settings
 
@@ -85,7 +86,6 @@ artnet-queue src/service.rs Service::start
 artnet-reply src/mqtt_subscriber.rs MqttSubscriber::handle_command_message
 artnet-reply src/mqtt_subscriber.rs MqttSubscriber::handle_universe_message
 artnet-reply src/service.rs Service::start
-ctrl-c src/main.rs main
 error-queue-recv src/mqtt_publisher.rs session
 error-queue-send src/mqtt_subscriber.rs session
 mqtt-backlog-lock src/mqtt_pump.rs Backlog::clear
@@ -96,6 +96,8 @@ mqtt-pump-queue src/mqtt_subscriber.rs session
 mqtt-request src/mqtt_publisher.rs session
 mqtt-request src/service.rs Service::announce
 mqtt-workers src/service.rs Service::mqtt_session
+service-stop src/service.rs Service::stop_within
+stop-signal src/main.rs StopSignals::recv
+stop-signal src/main.rs main
 task-shutdown src/service.rs Service::mqtt_session
-task-shutdown src/service.rs Service::stop
 ```

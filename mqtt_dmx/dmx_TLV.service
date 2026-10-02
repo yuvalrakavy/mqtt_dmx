@@ -13,12 +13,16 @@
 #
 
 [Unit]
-Description=DALI controller
+Description=DMX bridge (mqtt_dmx)
 After=systemd-networkd-wait-online.service
 Wants=systemd-networkd-wait-online.service
 
 [Service]
 ExecStart=/home/yuval/mqtt_dmx control-tlv
+# The bridge finds logging.toml by an upward search from here: install the repo's
+# logging.toml as /home/yuval/logging.toml. Its file log goes to logs/ here too.
+# `systemctl stop` sends SIGTERM, which the bridge handles: a bounded shutdown
+# (5 s), then the log flushed.
 WorkingDirectory=/home/yuval
 StandardOutput=file:/home/yuval/logs/dmx.log
 StandardError=file:/home/yuval/logs/dmx.log

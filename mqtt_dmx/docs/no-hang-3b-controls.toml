@@ -179,3 +179,34 @@ target      = "command"
 argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "an_outage_is_info_per_attempt"]
 expect_text = "no INFO with each outage's length when it ended"
 guard       = "outage_recovery_info"
+
+[[control]]
+name        = "sigterm_goes_unhandled"
+file        = "src/main.rs"
+anchor      = '''        let signals = match (signal(SignalKind::terminate()), signal(SignalKind::interrupt())) {'''
+replacement = '''        let signals = match (signal(SignalKind::user_defined1()), signal(SignalKind::interrupt())) {'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--test", "process", "--", "sigterm_stops_the_bridge_through_its_shutdown"]
+expect_text = "the bridge did not stop cleanly on SIGTERM"
+guard       = "sigterm_stops"
+
+[[control]]
+name        = "the_stop_waits_on_a_stuck_task"
+file        = "src/service.rs"
+anchor      = '''        if tokio::time::timeout(bound, self.workers.shutdown()).await.is_err() {'''
+replacement = '''        if { self.workers.shutdown().await; bound.is_zero() } {'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "stopping_is_bounded_when_a_task_will_not_end"]
+expect_text = "for a task stuck in a synchronous call"
+guard       = "stop_bounded"
+
+[[control]]
+name        = "a_failed_log_destination_takes_logging_down"
+file        = "src/main.rs"
+anchor      = '''        .on_destination_error(tracing_init::types::OnDestinationError::Skip)
+'''
+replacement = ''''''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--test", "process", "--", "a_log_destination_that_cannot_start"]
+expect_text = "no log reached GELF"
+guard       = "log_destinations_skip"
