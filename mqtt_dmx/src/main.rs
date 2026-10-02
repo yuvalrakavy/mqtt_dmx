@@ -2,6 +2,7 @@
 mod service;
 mod defs;
 mod mqtt_publisher;
+mod mqtt_pump;
 mod mqtt_subscriber;
 mod dmx;
 mod artnet_manager;
@@ -51,10 +52,11 @@ async fn main() {
 
     let service = service::Service::new(config);
 
-    let service = service.start().await;
+    // By path: the wait lint takes methods named `start` and `stop` for a dependency's.
+    let service = service::Service::start(service).await;
 
-    tokio::signal::ctrl_c().await.unwrap();
-    let _ = service.stop().await;
+    tokio::signal::ctrl_c().await.unwrap(); // WAIT: ctrl-c
+    let _ = service::Service::stop(service).await;
 }
 
 pub fn get_version() -> String {

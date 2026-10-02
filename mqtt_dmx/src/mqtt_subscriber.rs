@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use tracing::{error, info, info_span, Instrument};
-use rumqttc::v5::{EventLoop, Event, mqttbytes::v5::Packet};
 use tokio::sync::{mpsc::Sender, oneshot};
 
 use crate::{
@@ -13,6 +12,7 @@ use crate::{
     defs::{self, EffectNodeDefinition, DIMMING_AMOUNT_MAX},
     defs::{EffectUsage, UniverseDefinition},
     messages,
+    mqtt_pump::{Incoming, PumpEvent},
     persistence::Persistence,
     service::MqttError,
 };
@@ -28,8 +28,11 @@ struct MqttSubscriber {
     values: HashMap<Arc<str>, String>,
 }
 
+/// Handles the commands the pump forwards. It never polls: its waits — on the ArtNet and array
+/// managers, and on the error queue to the publisher — hold back this task alone, while the pump
+/// keeps draining rumqttc's request channel (no-hang §14.3).
 pub async fn session(
-    mut event_loop: EventLoop,
+    mut incoming: Incoming,
     to_artnet_tx: Sender<messages::ToArtnetManagerMessage>,
     to_array_tx: Sender<messages::ToArrayManagerMessage>,
     to_mqtt_publisher_tx: async_channel::Sender<messages::ToMqttPublisherMessage>,
@@ -50,9 +53,12 @@ pub async fn session(
     };
 
     loop {
-        let event = event_loop.poll().await.change_context_lazy(into_context)?;
-
-        if let Event::Incoming(Packet::Publish(publish)) = event {
+        let publish = match incoming.recv().await { // WAIT: mqtt-pump-queue
+            Some(PumpEvent::Publish(publish)) => publish,
+            Some(PumpEvent::Ended(e)) => return Err(Report::new(MqttError::Context(format!("MQTT connection failed: {e}")))),
+            None => return Err(Report::new(MqttError::Context("the MQTT pump stopped".to_string()))),
+        };
+        {
             let topic = String::from_utf8_lossy(&publish.topic).into_owned();
             let payload = publish.payload.clone();
 
@@ -73,6 +79,7 @@ pub async fn session(
                 if let Err(e) = mqtt_subscriber.handle_message(&topic, &payload).await {
                     error!(kind = "decode_error", topic = %topic, error = %e,
                            "MQTT message handling failed");
+                    // WAIT: error-queue-send
                     mqtt_subscriber
                         .to_mqtt_publisher_tx
                         .send(messages::ToMqttPublisherMessage::Error(e.to_string()))
@@ -94,6 +101,7 @@ impl MqttSubscriber {
         &self,
         msg: messages::ToArtnetManagerMessage,
     ) -> Result<(), Report<MqttError>> {
+        // WAIT: artnet-queue
         self.to_artnet_tx
             .send(msg)
             .await
@@ -104,6 +112,7 @@ impl MqttSubscriber {
         &self,
         msg: messages::ToArrayManagerMessage,
     ) -> Result<(), Report<MqttError>> {
+        // WAIT: array-queue
         self.to_array_tx
             .send(msg)
             .await
@@ -184,7 +193,7 @@ impl MqttSubscriber {
             ))
             .await?;
 
-            if let Err(e) = Self::recv_reply(rx_artnet_reply.await)? {
+            if let Err(e) = Self::recv_reply(rx_artnet_reply.await)? { // WAIT: artnet-reply
                 return Err(e)
                     .change_context_lazy(|| MqttError::Context(String::from("removing universe")));
             }
@@ -205,7 +214,7 @@ impl MqttSubscriber {
                     ))
                     .await?;
 
-                    if let Err(e) = Self::recv_reply(rx_artnet_reply.await)? {
+                    if let Err(e) = Self::recv_reply(rx_artnet_reply.await)? { // WAIT: artnet-reply
                         return Err(e).change_context_lazy(|| {
                             MqttError::Context(format!("adding universe {universe_id}"))
                         });
@@ -245,7 +254,7 @@ impl MqttSubscriber {
             ))
             .await?;
 
-            if let Err(e) = Self::recv_reply(rx.await)? {
+            if let Err(e) = Self::recv_reply(rx.await)? { // WAIT: array-reply
                 return Err(e).change_context_lazy(|| {
                     MqttError::Context(format!("removing array {array_id}"))
                 });
@@ -268,7 +277,7 @@ impl MqttSubscriber {
                     ))
                     .await?;
 
-                    if let Err(e) = Self::recv_reply(rx.await)? {
+                    if let Err(e) = Self::recv_reply(rx.await)? { // WAIT: array-reply
                         return Err(e).change_context_lazy(into_context);
                     }
 
@@ -296,7 +305,7 @@ impl MqttSubscriber {
             ))
             .await?;
 
-            if let Err(e) = Self::recv_reply(rx.await)? {
+            if let Err(e) = Self::recv_reply(rx.await)? { // WAIT: array-reply
                 return Err(e).change_context_lazy(|| {
                     MqttError::Context(format!("removing global value {value_name}"))
                 });
@@ -319,7 +328,7 @@ impl MqttSubscriber {
                     ))
                     .await?;
 
-                    if let Err(e) = Self::recv_reply(rx.await)? {
+                    if let Err(e) = Self::recv_reply(rx.await)? { // WAIT: array-reply
                         return Err(e).change_context_lazy(into_context);
                     }
 
@@ -347,7 +356,7 @@ impl MqttSubscriber {
             ))
             .await?;
 
-            if let Err(e) = Self::recv_reply(rx.await)? {
+            if let Err(e) = Self::recv_reply(rx.await)? { // WAIT: array-reply
                 return Err(e).change_context_lazy(|| {
                     MqttError::Context(format!("removing effect {effect_id}"))
                 });
@@ -370,7 +379,7 @@ impl MqttSubscriber {
                     ))
                     .await?;
 
-                    if let Err(e) = Self::recv_reply(rx.await)? {
+                    if let Err(e) = Self::recv_reply(rx.await)? { // WAIT: array-reply
                         return Err(e).change_context_lazy(into_context);
                     }
 
@@ -416,7 +425,7 @@ impl MqttSubscriber {
                     ))
                     .await?;
 
-                    let _ = Self::recv_reply(rx.await)?;
+                    let _ = Self::recv_reply(rx.await)?; // WAIT: array-reply
                 }
 
                 let (tx, rx) =
@@ -436,7 +445,7 @@ impl MqttSubscriber {
                 ))
                 .await?;
 
-                let result = Self::recv_reply(rx.await)?;
+                let result = Self::recv_reply(rx.await)?; // WAIT: array-reply
 
                 match result {
                     Err(e) => return Err(e).change_context_lazy(into_context),
@@ -450,7 +459,7 @@ impl MqttSubscriber {
                         ))
                         .await?;
 
-                        if let Err(e) = Self::recv_reply(rx.await)? {
+                        if let Err(e) = Self::recv_reply(rx.await)? { // WAIT: artnet-reply
                             return Err(e).change_context_lazy(into_context);
                         }
                     }
@@ -473,7 +482,7 @@ impl MqttSubscriber {
                 ))
                 .await?;
 
-                if let Err(e) = Self::recv_reply(rx.await)? {
+                if let Err(e) = Self::recv_reply(rx.await)? { // WAIT: artnet-reply
                     return Err(e).change_context_lazy(|| {
                         MqttError::Context(format!("stopping effect on array {array_id}"))
                     });
@@ -496,7 +505,7 @@ impl MqttSubscriber {
                 ))
                 .await?;
 
-                if let Err(e) = Self::recv_reply(rx.await)? {
+                if let Err(e) = Self::recv_reply(rx.await)? { // WAIT: artnet-reply
                     return Err(e).change_context_lazy(|| {
                         MqttError::Context(format!("setting channels on universe {universe_id}"))
                     });

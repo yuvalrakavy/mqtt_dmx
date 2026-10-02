@@ -1,4 +1,4 @@
-use tracing::{info, debug, trace};
+use tracing::{info, debug, trace, warn};
 use error_stack::{Report, ResultExt};
 use std::{
     collections::HashMap,
@@ -263,18 +263,18 @@ impl ArtnetManager {
         let mut tick_timer = interval(TICK_DURATION);
 
         loop {
-            select! {
+            select! { // WAIT: artnet-loop
                 _ = cancel.cancelled() => break,
 
                 _ = tick_timer.tick() => {
                     if let Err(e) = self.tick() {
-                        if to_mqtt_publisher.send(ToMqttPublisherMessage::Error(e.to_string())).await.is_err() {
+                        if !report(&to_mqtt_publisher, e.to_string()) {
                             break;
                         }
                     }
 
                     if let Err(e) = self.send_modified_universes() {
-                        if to_mqtt_publisher.send(ToMqttPublisherMessage::Error(e.to_string())).await.is_err() {
+                        if !report(&to_mqtt_publisher, e.to_string()) {
                             break;
                         }
                     }
@@ -288,6 +288,23 @@ impl ArtnetManager {
         }
 
         info!("ArtnetManager stopped");
+    }
+}
+
+/// Hands an error report to the MQTT publisher without waiting (Store no-hang §14.3). The ticker
+/// never waits on MQTT: the commands that wait on its replies come through the MQTT session, and
+/// while the broker is slow, or the bridge is between sessions and nobody takes from the queue, a
+/// wait here would also freeze every running fade. With the queue full, the newest report
+/// displaces the oldest, which is logged here instead of published. `false` once the queue is
+/// closed.
+fn report(to_mqtt_publisher: &async_channel::Sender<ToMqttPublisherMessage>, error: String) -> bool {
+    match to_mqtt_publisher.force_send(ToMqttPublisherMessage::Error(error)) {
+        Ok(None) => true,
+        Ok(Some(ToMqttPublisherMessage::Error(displaced))) => {
+            warn!(kind = "external_failure", error = %displaced, "DMX error report dropped: the MQTT error queue is full");
+            true
+        }
+        Err(_) => false,
     }
 }
 

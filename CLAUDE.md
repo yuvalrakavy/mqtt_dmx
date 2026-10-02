@@ -1,6 +1,20 @@
 # mqtt_dmx
 
-Two crates: `mqtt_dmx/` (the bridge — cross-compiled for Raspberry Pi armv7 by default via `.cargo/config.toml`) and `artnet_emulator/` (a dev-machine Dioxus UI emulator of the ArtNet bus side, targeting aarch64-apple-darwin). The bridge subscribes to MQTT topics under `DMX/#`, dispatches lighting commands to ArtNet universes and DMX arrays, and re-publishes state via `DMX/Active`, `DMX/Version`, and `DMX/LastError`/`DMX/Error`.
+Two crates: `mqtt_dmx/` (the bridge — cross-compiled for Raspberry Pi armv7 by default via `.cargo/config.toml`) and `artnet_emulator/` (a dev-machine Dioxus UI emulator of the ArtNet bus side, targeting aarch64-apple-darwin). The bridge subscribes to MQTT topics under `DMX/#`, dispatches lighting commands to ArtNet universes and DMX arrays, and re-publishes state via `DMX/Active`, `DMX/Version`, and `DMX/LastError`/`DMX/Error`. The broker argument is `host` or `host:port` (default 1883).
+
+## Build and test
+
+Tests run on the Mac, against an in-process fake broker (`mqtt-test-broker`) — never a real one: on a development Mac `localhost:1883` is the live local broker. Test universes use `disable_send`, so no test sends ArtNet.
+
+```bash
+cd mqtt_dmx
+cargo test --target aarch64-apple-darwin
+cargo clippy --target aarch64-apple-darwin --all-targets
+```
+
+## The MQTT loop (Store no-hang §14.3)
+
+rumqttc's request channel drains only while its event loop is polled, so the task that polls waits on nothing else. `Pump` (`mqtt_pump.rs`) polls and forwards incoming publishes on an unbounded queue (a WARN with `kind = "mqtt_backlog_high"` past 1000 unread, an INFO when it drains); the subscriber handles them, the publisher publishes error reports, and the ArtNet manager hands its own error reports over without waiting (`report`: with the queue full, the newest displaces the oldest). Every wait carries a `// WAIT: <row>` tag naming a row of `mqtt_dmx/docs/wait-registry.md`, which `tests/wait_registry.rs` checks; the negative controls are `mqtt_dmx/docs/no-hang-3b-controls.toml`.
 
 ## Logging
 

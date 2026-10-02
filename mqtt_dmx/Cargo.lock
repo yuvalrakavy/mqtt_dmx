@@ -692,6 +692,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mqtt-test-broker"
+version = "0.1.0"
+source = "git+http://github.com/yuvalrakavy/tracing-init.git#edfd0b9648438c04db0cd1e8227c4be7a1c19e53"
+dependencies = [
+ "bytes",
+ "rumqttc",
+ "tokio",
+]
+
+[[package]]
 name = "mqtt_dmx"
 version = "0.1.0"
 dependencies = [
@@ -701,6 +711,7 @@ dependencies = [
  "chrono",
  "error-stack",
  "log",
+ "mqtt-test-broker",
  "rumqttc",
  "rustop",
  "serde",
@@ -711,6 +722,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-init",
+ "wait-lint",
 ]
 
 [[package]]
@@ -1612,7 +1624,7 @@ dependencies = [
 [[package]]
 name = "tracing-init"
 version = "0.2.0"
-source = "git+http://github.com/yuvalrakavy/tracing-init.git#03f3da7b213646cd894a062c035b510eb423385c"
+source = "git+http://github.com/yuvalrakavy/tracing-init.git#edfd0b9648438c04db0cd1e8227c4be7a1c19e53"
 dependencies = [
  "bitflags",
  "futures-util",
@@ -1732,6 +1744,15 @@ name = "valuable"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
+
+[[package]]
+name = "wait-lint"
+version = "0.1.0"
+source = "git+http://github.com/yuvalrakavy/tracing-init.git#edfd0b9648438c04db0cd1e8227c4be7a1c19e53"
+dependencies = [
+ "proc-macro2",
+ "syn",
+]
 
 [[package]]
 name = "want"

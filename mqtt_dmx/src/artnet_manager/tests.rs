@@ -142,13 +142,14 @@ mod test_universe {
 #[cfg(test)]
 mod test_artnet_manager {
     use crate::{
-        artnet_manager::ArtnetManager,
+        artnet_manager::{ArtnetError, ArtnetManager, EffectNodeRuntime},
         defs::UniverseDefinition,
         dmx::{ChannelDefinition, ChannelValue, DimmerValue},
         messages::{ToArtnetManagerMessage, ToMqttPublisherMessage},
     };
 
-    use std::{net::IpAddr, str::FromStr, sync::Arc};
+    use error_stack::Report;
+    use std::{net::IpAddr, str::FromStr, sync::Arc, time::Duration};
     use tokio::sync::mpsc::Sender;
     use tokio_util::sync::CancellationToken;
 
@@ -264,6 +265,72 @@ mod test_artnet_manager {
         let result = rx.await.unwrap();
         cancel.cancel();
         assert!(result.is_ok());
+    }
+
+    /// An effect whose every tick fails: one error report per effect started.
+    #[derive(Debug)]
+    struct FailsItsTick(usize);
+
+    impl EffectNodeRuntime for FailsItsTick {
+        fn tick(&mut self, _: &mut ArtnetManager) -> Result<(), Report<ArtnetError>> {
+            Err(Report::new(ArtnetError::Context(format!("test effect {} failed", self.0))))
+        }
+
+        fn is_done(&self) -> bool {
+            false
+        }
+    }
+
+    /// Asks the manager something and waits a bounded time for its answer.
+    async fn answers(sender: &Sender<ToArtnetManagerMessage>, message: impl FnOnce(ReplyTx) -> ToArtnetManagerMessage) -> bool {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        sender.send(message(tx)).await.expect("the ArtNet manager's queue is open");
+        tokio::time::timeout(Duration::from_secs(2), rx).await.is_ok()
+    }
+
+    type ReplyTx = tokio::sync::oneshot::Sender<Result<(), Report<ArtnetError>>>;
+
+    /// The ArtNet manager never waits on MQTT (Store no-hang §14.3): with the error queue full —
+    /// the broker slow, or the bridge between MQTT sessions, so nobody takes from it — it keeps
+    /// ticking and answering, and the newest reports displace the oldest.
+    #[tokio::test]
+    async fn the_ticker_keeps_answering_while_the_mqtt_error_queue_is_full() {
+        const QUEUE: usize = 2;
+        let cancel = CancellationToken::new();
+        let (sender, receiver) = tokio::sync::mpsc::channel::<ToArtnetManagerMessage>(10);
+        // Nobody reads this queue.
+        let (to_mqtt_publisher, reports) = async_channel::bounded::<ToMqttPublisherMessage>(QUEUE);
+        let manager_cancel = cancel.clone();
+        tokio::spawn(async move {
+            ArtnetManager::new().run(manager_cancel, receiver, to_mqtt_publisher).await;
+        });
+        const STALLED: &str = "the ArtNet manager stopped answering while the MQTT error queue was full — its ticker waited on MQTT";
+
+        for n in 0..=QUEUE {
+            let effect = Box::new(FailsItsTick(n));
+            assert!(answers(&sender, |tx| ToArtnetManagerMessage::StartEffect(Arc::from(format!("failing-{n}")), effect, tx)).await, "{STALLED}");
+            if n < QUEUE {
+                // Its failed tick's report is queued.
+                let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+                while reports.len() < n + 1 && tokio::time::Instant::now() < deadline {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                assert_eq!(reports.len(), n + 1, "the failed tick of effect {n} reported no error");
+            } else {
+                // A few ticks: one more report, with the queue already full.
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        }
+        assert!(answers(&sender, |tx| ToArtnetManagerMessage::StopEffect(Arc::from("failing-0"), tx)).await, "{STALLED}");
+
+        let queued: Vec<String> = std::iter::from_fn(|| reports.try_recv().ok())
+            .map(|ToMqttPublisherMessage::Error(e)| e)
+            .collect();
+        assert!(
+            queued.len() == QUEUE && queued[0].contains("test effect 1") && queued[1].contains("test effect 2"),
+            "the error queue kept {queued:?}, not the newest reports"
+        );
+        cancel.cancel();
     }
 }
 

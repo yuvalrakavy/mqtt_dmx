@@ -12,9 +12,14 @@ use crate::{
     artnet_manager::ArtnetManager,
     get_version,
     messages::{self, ToArtnetManagerMessage},
-    mqtt_publisher, mqtt_subscriber,
+    mqtt_publisher,
+    mqtt_pump::Pump,
+    mqtt_subscriber,
     persistence::Persistence,
 };
+
+/// The bridge's liveness: `true` while it is connected, `false` from its last will.
+const ACTIVE_TOPIC: &str = "DMX/Active";
 
 pub struct Started {}
 pub struct Stopped {}
@@ -71,20 +76,24 @@ impl Service {
         }
     }
 
-    async fn connect_to_mqtt_broker(
-        mqtt_broker: &str,
-    ) -> Result<(AsyncClient, EventLoop), Report<MqttError>> {
-        let into_context =
-            || MqttError::Context(format!("Connecting to MQTT broker {mqtt_broker}"));
-        let mut mqtt_options = MqttOptions::new("DMX", mqtt_broker, 1883);
-        let last_will_topic = "DMX/Active".to_string();
-        let version_topic = "DMX/Version".to_string();
-        let last_will = LastWill::new(&last_will_topic, "false", QoS::AtLeastOnce, true, None);
+    /// The client and its event loop. Nothing reaches the broker until the event loop is polled.
+    fn mqtt_client(mqtt_broker: &str) -> (AsyncClient, EventLoop) {
+        let (host, port) = broker_host_port(mqtt_broker);
+        let mut mqtt_options = MqttOptions::new("DMX", host, port);
+        let last_will = LastWill::new(ACTIVE_TOPIC, "false", QoS::AtLeastOnce, true, None);
         mqtt_options
             .set_keep_alive(Duration::from_secs(5))
             .set_last_will(last_will);
 
-        let (mqtt_client, event_loop) = AsyncClient::new(mqtt_options, 10);
+        AsyncClient::new(mqtt_options, 10)
+    }
+
+    /// Publishes the bridge's active state and version, and subscribes to its commands. Each waits
+    /// on rumqttc's request channel, which the pump drains.
+    async fn announce(mqtt_client: &AsyncClient, mqtt_broker: &str) -> Result<(), Report<MqttError>> {
+        let into_context =
+            || MqttError::Context(format!("Connecting to MQTT broker {mqtt_broker}"));
+        let version_topic = "DMX/Version".to_string();
 
         // Build publish properties with current traceparent if a trace is active
         let props: Option<PublishProperties> = tracing_init::traceparent::current().map(|tp| {
@@ -95,22 +104,26 @@ impl Service {
 
         // Publish active state
         if let Some(p) = props.clone() {
+            // WAIT: mqtt-request
             mqtt_client
-                .publish_with_properties(&last_will_topic, QoS::AtLeastOnce, true, "true", p)
+                .publish_with_properties(ACTIVE_TOPIC, QoS::AtLeastOnce, true, "true", p)
                 .await
                 .change_context_lazy(into_context)?;
         } else {
+            // WAIT: mqtt-request
             mqtt_client
-                .publish(&last_will_topic, QoS::AtLeastOnce, true, "true")
+                .publish(ACTIVE_TOPIC, QoS::AtLeastOnce, true, "true")
                 .await
                 .change_context_lazy(into_context)?;
         }
         if let Some(p) = props {
+            // WAIT: mqtt-request
             mqtt_client
                 .publish_with_properties(&version_topic, QoS::AtLeastOnce, true, get_version(), p)
                 .await
                 .change_context_lazy(into_context)?;
         } else {
+            // WAIT: mqtt-request
             mqtt_client
                 .publish(&version_topic, QoS::AtLeastOnce, true, get_version())
                 .await
@@ -118,13 +131,16 @@ impl Service {
         }
 
         // Subscribe to commands
+        // WAIT: mqtt-request
         mqtt_client
             .subscribe("DMX/#".to_string(), QoS::AtLeastOnce)
             .await
             .change_context_lazy(into_context)?;
-        Ok((mqtt_client, event_loop))
+        Ok(())
     }
 
+    /// One connection: the pump polls, the publisher publishes error reports, the subscriber
+    /// handles commands. No task here polls and waits on anything else (no-hang §14.3).
     async fn mqtt_session(
         broker_address: &str,
         to_artnet_tx: Sender<ToArtnetManagerMessage>,
@@ -133,11 +149,12 @@ impl Service {
         to_mqtt_publisher_tx: async_channel::Sender<messages::ToMqttPublisherMessage>,
         persistence: Arc<Persistence>,
     ) -> Result<(), Report<MqttError>> {
+        let (mqtt_client, mqtt_event_loop) = Service::mqtt_client(broker_address);
+        // Polling first, so every publish below has an event loop draining it.
+        let (_pump, incoming) = Pump::start(mqtt_event_loop);
+        Service::announce(&mqtt_client, broker_address).await?;
+
         let mut mqtt_workers = JoinSet::new();
-
-        let (mqtt_client, mqtt_event_loop) =
-            Service::connect_to_mqtt_broker(broker_address).await?;
-
         mqtt_workers.spawn(async move {
             let e = mqtt_publisher::session(mqtt_client, to_mqtt_publisher_rx).await;
             info!("MQTT publisher session ended: {:?}", e)
@@ -145,7 +162,7 @@ impl Service {
 
         mqtt_workers.spawn(async move {
             let e = mqtt_subscriber::session(
-                mqtt_event_loop,
+                incoming,
                 to_artnet_tx,
                 to_array_tx,
                 to_mqtt_publisher_tx,
@@ -155,8 +172,11 @@ impl Service {
             info!("MQTT subscriber session ended: {:?}", e)
         });
 
-        let _ = mqtt_workers.join_next().await; // Wait until either the publisher or the subscriber fails
-        let _ = mqtt_workers.shutdown().await; // Shutdown the other worker
+        // Until either the publisher or the subscriber ends. A failed connection ends both: the
+        // pump hands the subscriber `Ended` and drops the event loop, so a publish waiting on the
+        // request channel fails.
+        let _ = mqtt_workers.join_next().await; // WAIT: mqtt-workers
+        mqtt_workers.shutdown().await; // WAIT: task-shutdown
 
         Ok(())
     }
@@ -200,13 +220,13 @@ impl Service<Stopped> {
 
         let to_mqtt_publisher_tx_instance = to_mqtt_publisher_tx.clone();
 
-        // Create Artnet manager worker
+        // Create Artnet manager worker. The managers' loops are called by path: the wait lint
+        // takes a method named `run` for a dependency's.
         let cancel_instance = cancel.clone();
         self.workers.spawn(async move {
             let mut artnet_manager = ArtnetManager::new();
 
-            artnet_manager
-                .run(cancel_instance, to_artnet_rx, to_mqtt_publisher_tx_instance)
+            ArtnetManager::run(&mut artnet_manager, cancel_instance, to_artnet_rx, to_mqtt_publisher_tx_instance)
                 .await;
         });
 
@@ -216,7 +236,7 @@ impl Service<Stopped> {
         self.workers.spawn(async move {
             let mut array_manager = array_manager::ArrayManager::new();
 
-            array_manager.run(cancel_instance, to_array_rx).await;
+            array_manager::ArrayManager::run(&mut array_manager, cancel_instance, to_array_rx).await;
         });
 
         let persistence = Arc::new(Persistence::new(self.config.storage_path.clone()));
@@ -246,6 +266,7 @@ impl Service<Stopped> {
 
         for (universe_id, definition) in persisted_universes {
             let (tx, rx) = tokio::sync::oneshot::channel();
+            // WAIT: artnet-queue
             if to_artnet_tx_replay
                 .send(ToArtnetManagerMessage::AddUniverse(
                     universe_id.clone(),
@@ -255,7 +276,7 @@ impl Service<Stopped> {
                 .await
                 .is_ok()
             {
-                if let Ok(Err(e)) = rx.await {
+                if let Ok(Err(e)) = rx.await { // WAIT: artnet-reply
                     error!(kind = "decode_error", universe_id = %universe_id, error = ?e,
                            "failed to restore persisted universe");
                 }
@@ -264,6 +285,7 @@ impl Service<Stopped> {
 
         for (array_id, definition) in persisted_arrays {
             let (tx, rx) = tokio::sync::oneshot::channel();
+            // WAIT: array-queue
             if to_array_tx_replay
                 .send(messages::ToArrayManagerMessage::AddArray(
                     array_id.clone(),
@@ -273,7 +295,7 @@ impl Service<Stopped> {
                 .await
                 .is_ok()
             {
-                if let Ok(Err(e)) = rx.await {
+                if let Ok(Err(e)) = rx.await { // WAIT: array-reply
                     error!(kind = "decode_error", array_id = %array_id, error = ?e,
                            "failed to restore persisted array");
                 }
@@ -282,6 +304,7 @@ impl Service<Stopped> {
 
         for (effect_id, definition) in persisted_effects {
             let (tx, rx) = tokio::sync::oneshot::channel();
+            // WAIT: array-queue
             if to_array_tx_replay
                 .send(messages::ToArrayManagerMessage::AddEffect(
                     effect_id.clone(),
@@ -291,7 +314,7 @@ impl Service<Stopped> {
                 .await
                 .is_ok()
             {
-                if let Ok(Err(e)) = rx.await {
+                if let Ok(Err(e)) = rx.await { // WAIT: array-reply
                     error!(kind = "decode_error", effect_id = %effect_id, error = ?e,
                            "failed to restore persisted effect");
                 }
@@ -300,6 +323,7 @@ impl Service<Stopped> {
 
         for (value_name, value) in persisted_values {
             let (tx, rx) = tokio::sync::oneshot::channel();
+            // WAIT: array-queue
             if to_array_tx_replay
                 .send(messages::ToArrayManagerMessage::AddGlobalValue(
                     value_name.clone(),
@@ -309,7 +333,7 @@ impl Service<Stopped> {
                 .await
                 .is_ok()
             {
-                if let Ok(Err(e)) = rx.await {
+                if let Ok(Err(e)) = rx.await { // WAIT: array-reply
                     error!(kind = "decode_error", value_name = %value_name, error = ?e,
                            "failed to restore persisted value");
                 }
@@ -345,7 +369,7 @@ impl Service<Started> {
         if let Some(cancel) = self.cancel.take() {
             cancel.cancel();
         }
-        self.workers.shutdown().await;
+        self.workers.shutdown().await; // WAIT: task-shutdown
         info!("Service stopped");
 
         Service {
@@ -356,3 +380,17 @@ impl Service<Started> {
         }
     }
 }
+
+/// `host` or `host:port` (default 1883).
+fn broker_host_port(broker: &str) -> (&str, u16) {
+    match broker.rsplit_once(':') {
+        Some((host, port)) if !host.is_empty() => match port.parse() {
+            Ok(port) => (host, port),
+            Err(_) => (broker, 1883),
+        },
+        _ => (broker, 1883),
+    }
+}
+
+#[cfg(test)]
+mod tests;

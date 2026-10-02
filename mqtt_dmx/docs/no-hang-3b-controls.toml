@@ -1,0 +1,67 @@
+# Negative controls for mqtt_dmx's no-hang 3b change (Store no-hang §14). Run from Store with
+#     scripts/negative-control.py --root ../Home/mqtt_dmx-3b/mqtt_dmx ../Home/mqtt_dmx-3b/mqtt_dmx/docs/no-hang-3b-controls.toml
+# (The saturation tests' own controls are the failing-first runs on the old session: the burst
+# reported 1 of 100 error reports after the broker recovered; the ArtNet path took no command
+# after it recovered; the ArtNet manager stopped answering with its error queue full. The ArtNet
+# path's session test needs both fixes reverted to go red — either one breaks that cycle — so it
+# has no one-mutation row here.)
+
+[[control]]
+name        = "the_pump_waits_on_the_subscriber"
+file        = "src/mqtt_pump.rs"
+anchor      = '''                    Ok(Event::Incoming(Packet::Publish(publish))) => {
+                        pushed.pushed();'''
+replacement = '''                    Ok(Event::Incoming(Packet::Publish(publish))) => {
+                        // control: a forward queue of one — the pump waits for the subscriber
+                        while pushed.depth.load(Ordering::SeqCst) > 0 {
+                            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                        }
+                        pushed.pushed();'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "a_burst_of_failing_commands_against_a_stalled_broker"]
+expect_text = "error reports arrived after the broker recovered"
+guard       = "pump_waits_on_nothing"
+
+[[control]]
+name        = "the_artnet_ticker_waits_on_the_error_queue"
+file        = "src/artnet_manager/manager.rs"
+anchor      = '''                    if let Err(e) = self.tick() {
+                        if !report(&to_mqtt_publisher, e.to_string()) {'''
+replacement = '''                    if let Err(e) = self.tick() {
+                        if to_mqtt_publisher.send(ToMqttPublisherMessage::Error(e.to_string())).await.is_err() {'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "the_ticker_keeps_answering_while_the_mqtt_error_queue_is_full"]
+expect_text = "the ArtNet manager stopped answering while the MQTT error queue was full"
+guard       = "artnet_never_waits_on_mqtt"
+
+[[control]]
+name        = "the_backlog_never_raises_its_warn"
+file        = "src/mqtt_pump.rs"
+anchor      = '''            if high.is_none() {
+                *high = Some(Instant::now());'''
+replacement = '''            if false {
+                *high = Some(Instant::now());'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "a_backlog_past_high_water"]
+expect_text = "not flagged at the high-water mark"
+guard       = "backlog_high_water"
+
+[[control]]
+name        = "a_wait_loses_its_tag"
+file        = "src/mqtt_publisher.rs"
+anchor      = '''props.clone()).await.change_context_lazy(into_context)?; // WAIT: mqtt-request'''
+replacement = '''props.clone()).await.change_context_lazy(into_context)?;'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--test", "wait_registry"]
+expect_text = "is an untagged wait"
+guard       = "registry_wired"
+
+[[control]]
+name        = "a_collision_is_undeclared"
+file        = "docs/wait-registry.md"
+anchor      = '''local-methods = handle_message'''
+replacement = '''# local-methods = handle_message'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--test", "wait_registry"]
+expect_text = "`.handle_message(..).await` on a receiver other than `self`"
+guard       = "collision_declared"
