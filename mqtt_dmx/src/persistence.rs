@@ -6,8 +6,10 @@
 //! thread under a bound, and a save is posted — the latest content per file, replacing a save of
 //! that file still waiting — to a writer task, which runs each write on a blocking thread, one at
 //! a time. A write that passes its bound is a WARN, and the writer waits for it before the next:
-//! a stalled disk holds one thread, and the saves posted meanwhile coalesce. Posting never waits;
-//! nothing waits on the writer but the service's stop, within its bound.
+//! a stalled disk holds one thread, and the saves posted meanwhile coalesce. A write that fails
+//! keeps its content, which the writer tries again at a pace until a save succeeds (unless a newer
+//! save of that file replaces it). Posting never waits; nothing waits on the writer but the
+//! service's stop, within its bound.
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -22,6 +24,10 @@ use crate::defs::{DmxArray, EffectNodeDefinition, UniverseDefinition};
 
 /// How long one write may take before it is a WARN.
 const SAVE_WITHIN: Duration = Duration::from_secs(5);
+
+/// How long the writer waits after a failed write before it tries again: a disk that refuses every
+/// write at once is not spun on.
+const SAVE_RETRY_AFTER: Duration = Duration::from_secs(5);
 
 /// The bridge's configuration: what the managers are given at startup, and what each MQTT session
 /// starts from.
@@ -135,6 +141,8 @@ impl Persistence {
             };
             let path = self.storage_path.join(file);
             let dir = self.storage_path.clone();
+            // Kept until it is written: a failed write puts it back (Store 3b review round 3, X7).
+            let content = json.clone();
             let mut write = tokio::task::spawn_blocking(move || write_file(&dir, file, &json));
             // WAIT: persistence-write
             let done = match tokio::time::timeout(SAVE_WITHIN, &mut write).await {
@@ -148,10 +156,36 @@ impl Persistence {
                     write.await
                 }
             };
-            match done {
-                Ok(Ok(())) => failing.succeeded(),
-                Ok(Err(e)) => failing.failed(&path, &e.to_string()),
-                Err(e) => failing.failed(&path, &format!("the write panicked: {e}")),
+            let failed = match done {
+                Ok(Ok(())) => {
+                    failing.succeeded();
+                    false
+                }
+                Ok(Err(e)) => {
+                    failing.failed(&path, &e.to_string());
+                    true
+                }
+                Err(e) => {
+                    failing.failed(&path, &format!("the write panicked: {e}"));
+                    true
+                }
+            };
+            if failed {
+                // The content holds in memory, as the WARN says, until a save succeeds: back in
+                // line, unless a newer save of the file already waits there.
+                self.locked().pending.entry(file).or_insert(content);
+                // Then a pause before the next try. Saves posted meanwhile do not cut it short; the
+                // stop does, and gives up what is still unwritten.
+                let retry_at = tokio::time::Instant::now() + SAVE_RETRY_AFTER;
+                loop {
+                    if self.locked().closed {
+                        return;
+                    }
+                    // WAIT: persistence-retry
+                    if tokio::time::timeout_at(retry_at, self.wake.notified()).await.is_err() {
+                        break;
+                    }
+                }
             }
         }
     }
@@ -315,5 +349,51 @@ mod tests {
             warns.len() == 1 && warns[0].kind() == Some("config_load_failed"),
             "an unreadable saved file was not one WARN config_load_failed: {warns:#?}"
         );
+    }
+
+    /// A save that fails is kept, and tried again until one succeeds — "changes hold in memory
+    /// until a save succeeds" — at a pace, never spun on a disk that refuses every write at once
+    /// (Store no-hang 3b review round 3, X7: the writer dropped a file's content after a failed
+    /// write, and nothing wrote it again until the next change). The storage directory is a file
+    /// for 2 s, so the first write fails; then the disk works again.
+    #[test]
+    fn a_failed_save_is_kept_and_tried_again_at_a_pace() {
+        use super::{read_config, Persistence};
+        use std::collections::HashMap;
+        use std::sync::Arc;
+        use std::time::Duration;
+
+        let base = std::env::temp_dir().join(format!("mqtt-dmx-retry-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).expect("create the test's directory");
+        let storage = base.join("storage");
+        std::fs::write(&storage, "a file where the storage directory would go").expect("block the storage directory");
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let mut saved = false;
+        let events = capture(|| {
+            runtime.block_on(async {
+                let persistence = Arc::new(Persistence::new(storage.clone()));
+                let writer = tokio::spawn(Persistence::write_saves(persistence.clone()));
+                let mut values = HashMap::new();
+                values.insert(Arc::<str>::from("Level"), "42".to_string());
+                persistence.save_values(&values);
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                std::fs::remove_file(&storage).expect("unblock the storage directory");
+                let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+                while tokio::time::Instant::now() < deadline {
+                    if read_config(&storage).values.get("Level").map(String::as_str) == Some("42") {
+                        saved = true;
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                persistence.close();
+                let _ = tokio::time::timeout(Duration::from_secs(10), writer).await;
+            });
+        });
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(saved, "the failed save was never tried again: its content was dropped");
+        let failures = events.iter().filter(|e| e.kind() == Some("config_save_failed")).count();
+        assert_eq!(failures, 1, "the writer did not wait before trying again: {failures} failures in 2 s");
     }
 }

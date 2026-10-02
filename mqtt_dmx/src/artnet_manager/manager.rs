@@ -321,12 +321,12 @@ const SEND_OUTAGE_WARN_AFTER: Duration = Duration::from_secs(30);
 /// node, its port unreachable — is a failed attempt, and the tick tries again 50 ms later. One
 /// episode in the log (no-hang F2; it was a WARN `external_failure` per tick, 20 a second): INFO
 /// `device_connection_lost` at the first failure, DEBUG for the rest, one WARN `device_unreachable`
-/// once it has lasted 30 s, and INFO `device_recovered` with its length and failures when a packet
+/// once it has lasted 30 s, and INFO `device_recovered` with its length and `attempts` when a packet
 /// goes out again — the only proof of life ArtNet gives, since a node never answers.
 #[derive(Default)]
 pub(super) struct SendOutage {
     since: Option<Instant>,
-    failures: u64,
+    attempts: u64,
     warned: bool,
 }
 
@@ -340,17 +340,17 @@ impl SendOutage {
     }
 
     pub(super) fn failed_at(&mut self, now: Instant, error: &str) {
-        self.failures += 1;
+        self.attempts += 1;
         let Some(since) = self.since else {
             self.since = Some(now);
             info!(kind = "device_connection_lost", error, "ArtNet send failed: the node is unreachable");
             return;
         };
         let down_for_ms = now.saturating_duration_since(since).as_millis() as u64;
-        debug!(kind = "device_connection_lost", error, failures = self.failures, down_for_ms, "ArtNet send failed again");
+        debug!(kind = "device_connection_lost", error, attempts = self.attempts, down_for_ms, "ArtNet send failed again");
         if !self.warned && now.saturating_duration_since(since) >= SEND_OUTAGE_WARN_AFTER {
             self.warned = true;
-            warn!(kind = "device_unreachable", failures = self.failures, down_for_ms, error,
+            warn!(kind = "device_unreachable", attempts = self.attempts, down_for_ms, error,
                   "ArtNet node unreachable: sends have failed for over 30 s");
         }
     }
@@ -358,9 +358,9 @@ impl SendOutage {
     pub(super) fn sent_at(&mut self, now: Instant) {
         if let Some(since) = self.since.take() {
             info!(kind = "device_recovered", down_for_ms = now.saturating_duration_since(since).as_millis() as u64,
-                  failures = self.failures, "ArtNet sends go out again");
+                  attempts = self.attempts, "ArtNet sends go out again");
         }
-        self.failures = 0;
+        self.attempts = 0;
         self.warned = false;
     }
 }
@@ -665,5 +665,8 @@ mod send_outage_tests {
             recovered.len() == 1 && recovered[0].field("down_for_ms") == Some("40000"),
             "not one INFO device_recovered with the outage's length: {recovered:#?}"
         );
+        // The fleet's field for an outage's count (Store's kind table; review round 3, X5).
+        assert_eq!(warns[0].field("attempts"), Some("601"), "the WARN does not carry the outage's attempts");
+        assert_eq!(recovered[0].field("attempts"), Some("800"), "the recovery does not carry the outage's attempts");
     }
 }

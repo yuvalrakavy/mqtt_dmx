@@ -28,6 +28,20 @@ impl Drop for Bridge {
     }
 }
 
+/// A logging config sending GELF to `gelf` and nowhere else, in `dir`: its path.
+fn gelf_config(dir: &Path, gelf: &UdpSocket) -> PathBuf {
+    let config = dir.join("test-logging.toml");
+    std::fs::write(
+        &config,
+        format!(
+            "[logging]\ndestination = \"\"\n\n[logging.gelf]\naddress = \"{}\"\n",
+            gelf.local_addr().expect("the GELF socket's address")
+        ),
+    )
+    .expect("write the logging config");
+    config
+}
+
 impl Bridge {
     /// The bridge on `broker`, in a fresh directory prepared by `prepare`, logging GELF to `gelf`.
     fn start(
@@ -36,20 +50,32 @@ impl Bridge {
         gelf: &UdpSocket,
         prepare: impl FnOnce(&Path),
     ) -> Bridge {
+        Bridge::start_with(
+            tag,
+            broker,
+            |dir| {
+                prepare(dir);
+                gelf_config(dir, gelf)
+            },
+            Stdio::null(),
+            Stdio::null(),
+        )
+    }
+
+    /// The bridge on `broker`, in a fresh directory prepared by `prepare`, which returns the path
+    /// for `LOG_CONFIG`; its stdout and stderr as given.
+    fn start_with(
+        tag: &str,
+        broker: &FakeBroker,
+        prepare: impl FnOnce(&Path) -> PathBuf,
+        stdout: Stdio,
+        stderr: Stdio,
+    ) -> Bridge {
         let dir =
             std::env::temp_dir().join(format!("mqtt-dmx-process-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("create the bridge's directory");
-        let config = dir.join("test-logging.toml");
-        std::fs::write(
-            &config,
-            format!(
-                "[logging]\ndestination = \"\"\n\n[logging.gelf]\naddress = \"{}\"\n",
-                gelf.local_addr().expect("the GELF socket's address")
-            ),
-        )
-        .expect("write the logging config");
-        prepare(&dir);
+        let config = prepare(&dir);
         let child = Command::new(env!("CARGO_BIN_EXE_mqtt_dmx"))
             .arg(broker.address())
             .arg("--storage")
@@ -60,8 +86,8 @@ impl Bridge {
             .env_remove("LOG_LEVEL")
             .env_remove("RUST_LOG")
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stdout(stdout)
+            .stderr(stderr)
             .spawn()
             .expect("start the bridge");
         Bridge { child, dir }
@@ -343,6 +369,113 @@ async fn a_log_destination_that_cannot_start_costs_that_destination_alone() {
             logged(&gelf, &mut messages, "Starting mqtt_dmx", Duration::from_secs(5)).await,
             "no log reached GELF — a log destination that could not start took logging down with it"
         );
+    };
+    tokio::time::timeout(Duration::from_secs(60), test)
+        .await
+        .expect("the test itself ran out of time");
+}
+
+/// The UTC date `days` from today, as tracing-init's daily log file names it (`YYYY-MM-DD`).
+fn utc_date(days: i64) -> String {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("after 1970");
+    // Days since 1970-01-01 to a civil date (H. Hinnant's algorithm).
+    let z = (now.as_secs() / 86_400) as i64 + days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
+/// A log destination that stalls while the logging starts — the log file a FIFO nobody reads, as
+/// on a hung disk — holds up neither the stop nor the process's end: SIGTERM ends the bridge
+/// cleanly about a second later (Store no-hang 3b review round 3, B1). The whole logging start runs
+/// on a blocking thread raced against the stop, and the runtime's bounded end abandons that thread
+/// while it still waits (F1). tracing-init gives a stalled destination up after 5 s, so on the old
+/// code, which started the logging inline, a SIGTERM sent at 1 s was acted on about 4 s later. The
+/// SIGTERM's own time is checked, so a late one cannot hide that wait. The FIFOs' read ends are
+/// never opened.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stop_during_a_stalled_logging_start_is_prompt() {
+    // The runtime's 1 s drain, with room; the old code's wait was about 4 s.
+    const PROMPT: Duration = Duration::from_millis(2500);
+    let test = async {
+        let broker = FakeBroker::start().await;
+        let gelf = gelf_socket();
+        let spawned = std::time::Instant::now();
+        let mut bridge = Bridge::start_with(
+            "logging-start",
+            &broker,
+            |dir| {
+                let logs = dir.join("logs");
+                std::fs::create_dir_all(&logs).expect("create the log directory");
+                // Today's file, and tomorrow's should the date turn meanwhile (UTC, as tracing-init names it).
+                for days in [0, 1] {
+                    stalled_file(&logs.join(format!("dmx.{}.log", utc_date(days))));
+                }
+                gelf_config(dir, &gelf)
+            },
+            Stdio::null(),
+            Stdio::null(),
+        );
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert!(bridge.child.try_wait().expect("poll the bridge").is_none(), "the bridge ended on its own");
+        sigterm(&bridge.child);
+        let sent = spawned.elapsed();
+        assert!(sent < Duration::from_millis(1500), "inconclusive: SIGTERM went out {sent:?} after the start, near tracing-init's 5 s");
+        let status = bridge.exited(PROMPT).await.unwrap_or_else(|| {
+            panic!("the bridge did not exit within {PROMPT:?} of SIGTERM while its logging start was stalled")
+        });
+        assert!(status.success(), "the bridge did not stop cleanly ({status})");
+    };
+    tokio::time::timeout(Duration::from_secs(60), test)
+        .await
+        .expect("the test itself ran out of time");
+}
+
+/// The bridge's lifecycle output goes through its logging, whose writers drop lines rather than
+/// wait, never straight to stdout or stderr: a supervisor's pipe that has stopped draining holds up
+/// neither its start nor its stop (Store no-hang 3b review round 3, B2). Its stdout and stderr
+/// here are one pipe the test fills first and never reads until the bridge has exited. On the old
+/// code `main` printed its logging summary there, and never got further.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_full_output_pipe_holds_up_neither_the_start_nor_the_stop() {
+    use std::io::Write;
+    let test = async {
+        let (unread, output) = std::io::pipe().expect("a pipe");
+        // Full: a thread writes into it until it blocks, and stays there until the pipe's reader
+        // is dropped, after the bridge has exited.
+        let mut filler = output.try_clone().expect("the pipe's write end");
+        std::thread::spawn(move || {
+            let block = [b'.'; 65536];
+            while filler.write_all(&block).is_ok() {}
+        });
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let broker = FakeBroker::start().await;
+        let gelf = gelf_socket();
+        let mut bridge = Bridge::start_with(
+            "full-pipe",
+            &broker,
+            |dir| gelf_config(dir, &gelf),
+            Stdio::from(output.try_clone().expect("the pipe's write end")),
+            Stdio::from(output),
+        );
+        assert!(
+            broker.wait_for_subscription("DMX/#", Duration::from_secs(20)).await,
+            "the bridge never subscribed — it waited on its full stdout or stderr"
+        );
+        sigterm(&bridge.child);
+        let status = bridge
+            .exited(STOP_BOUND)
+            .await
+            .unwrap_or_else(|| panic!("the bridge did not exit within {STOP_BOUND:?} of SIGTERM with its output pipe full"));
+        assert!(status.success(), "the bridge did not stop cleanly ({status})");
+        drop(unread);
     };
     tokio::time::timeout(Duration::from_secs(60), test)
         .await

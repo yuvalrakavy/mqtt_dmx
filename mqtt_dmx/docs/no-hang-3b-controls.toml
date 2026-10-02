@@ -345,7 +345,7 @@ anchor      = '''        if let Some(report) = last_error.get() {'''
 replacement = '''        if let Some(report) = last_error.get().filter(|_| false) {'''
 target      = "command"
 argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "active_goes_out_only_after_the_subscription"]
-expect_text = "did not republish the last error report"
+expect_text = "the model never arrived"
 guard       = "connack_republishes_last_error"
 
 # --- Store 3b round 2, kinds: a failed command is logged once, at the level and kind its cause
@@ -422,8 +422,8 @@ guard       = "unreadable_file_is_config_load_failed"
 [[control]]
 name        = "every_failed_send_is_a_warn"
 file        = "src/artnet_manager/manager.rs"
-anchor      = '''        debug!(kind = "device_connection_lost", error, failures = self.failures, down_for_ms, "ArtNet send failed again");'''
-replacement = '''        warn!(kind = "external_failure", error, failures = self.failures, down_for_ms, "ArtNet send failed again");'''
+anchor      = '''        debug!(kind = "device_connection_lost", error, attempts = self.attempts, down_for_ms, "ArtNet send failed again");'''
+replacement = '''        warn!(kind = "external_failure", error, attempts = self.attempts, down_for_ms, "ArtNet send failed again");'''
 target      = "command"
 argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "failing_sends_are_one_outage_episode"]
 expect_text = "the later failures are not DEBUG"
@@ -439,3 +439,78 @@ target      = "command"
 argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "a_command_whose_manager_has_gone"]
 expect_text = "a manager gone with the service's stop was logged above DEBUG"
 guard       = "manager_gone_at_stop_is_debug"
+
+# --- Store 3b review round 3: B1, B2, X4, X5, X7 ---
+
+# B1: the logging's start is not raced against the stop: a stop waits for it.
+[[control]]
+name        = "the_logging_start_is_not_raced"
+file        = "src/main.rs"
+anchor      = '''        _ = stop.recv() => return None,'''
+replacement = '''        _ = std::future::pending::<()>() => return None,'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--test", "process", "--", "a_stop_during_a_stalled_logging_start_is_prompt"]
+expect_text = "of SIGTERM while its logging start was stalled"
+guard       = "logging_start_raced"
+
+# B2: the logging summary printed to stdout again, as it was.
+[[control]]
+name        = "a_lifecycle_line_goes_to_stdout"
+file        = "src/main.rs"
+anchor      = '''        info!("Logging: {guard}");'''
+replacement = '''        println!("Logging: {guard}");
+        info!("Logging: {guard}");'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--test", "process", "--", "a_full_output_pipe_holds_up_neither"]
+expect_text = "it waited on its full stdout or stderr"
+guard       = "no_lifecycle_prints"
+
+# X4: the model before Active=true, as it was.
+[[control]]
+name        = "the_model_goes_before_active"
+file        = "src/service.rs"
+anchor      = '''        publish_retained(mqtt_client, ACTIVE_TOPIC, b"true".to_vec(), &props)
+            .await
+            .change_context_lazy(into_context)?;
+        publish_retained(mqtt_client, "DMX/Version", get_version().into_bytes(), &props)'''
+replacement = '''        publish_retained(mqtt_client, "DMX/Version", get_version().into_bytes(), &props)
+            .await
+            .change_context_lazy(into_context)?;
+        publish_retained(mqtt_client, ACTIVE_TOPIC, b"true".to_vec(), &props)'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "active_goes_out_only_after_the_subscription"]
+expect_text = "not Active=true"
+guard       = "active_before_the_model"
+
+# X5: the device outage's WARN counts `failures`, as it did.
+[[control]]
+name        = "the_outage_counts_failures"
+file        = "src/artnet_manager/manager.rs"
+anchor      = '''            warn!(kind = "device_unreachable", attempts = self.attempts, down_for_ms, error,'''
+replacement = '''            warn!(kind = "device_unreachable", failures = self.attempts, down_for_ms, error,'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "failing_sends_are_one_outage_episode"]
+expect_text = "the WARN does not carry the outage's attempts"
+guard       = "device_outage_attempts"
+
+# X7: a failed write's content dropped, as it was.
+[[control]]
+name        = "a_failed_save_is_dropped"
+file        = "src/persistence.rs"
+anchor      = '''                self.locked().pending.entry(file).or_insert(content);'''
+replacement = '''                let _ = content;'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "a_failed_save_is_kept_and_tried_again_at_a_pace"]
+expect_text = "the failed save was never tried again"
+guard       = "failed_save_kept"
+
+# X7: the retry without its pause: a disk that refuses every write is spun on.
+[[control]]
+name        = "a_failed_save_is_retried_at_once"
+file        = "src/persistence.rs"
+anchor      = '''                let retry_at = tokio::time::Instant::now() + SAVE_RETRY_AFTER;'''
+replacement = '''                let retry_at = tokio::time::Instant::now();'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "a_failed_save_is_kept_and_tried_again_at_a_pace"]
+expect_text = "the writer did not wait before trying again"
+guard       = "failed_save_paced"

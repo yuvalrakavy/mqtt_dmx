@@ -114,11 +114,11 @@ impl Service {
         AsyncClient::new(mqtt_options, 10)
     }
 
-    /// Subscribes to the bridge's commands, republishes its retained model — its version and its
-    /// last error report, from its own state — and then says it is active (no-hang F4): every
-    /// connection is a clean start, and a broker that restarted without its retained messages
-    /// gets them all again. `Active=true` goes last, once the bridge can hear its commands. Each
-    /// waits on rumqttc's request channel, which the pump drains.
+    /// Subscribes to the bridge's commands, says it is active once it can hear them, and then
+    /// republishes its retained model — its version and its last error report, from its own state
+    /// (no-hang F4, in the fleet's order: subscribe, `Active`, the model; Store 3b review round 3,
+    /// X4): every connection is a clean start, and a broker that restarted without its retained
+    /// messages gets them all again. Each waits on rumqttc's request channel, which the pump drains.
     async fn announce(
         mqtt_client: &AsyncClient,
         mqtt_broker: &str,
@@ -141,6 +141,9 @@ impl Service {
             .await
             .change_context_lazy(into_context)?;
 
+        publish_retained(mqtt_client, ACTIVE_TOPIC, b"true".to_vec(), &props)
+            .await
+            .change_context_lazy(into_context)?;
         publish_retained(mqtt_client, "DMX/Version", get_version().into_bytes(), &props)
             .await
             .change_context_lazy(into_context)?;
@@ -149,9 +152,6 @@ impl Service {
                 .await
                 .change_context_lazy(into_context)?;
         }
-        publish_retained(mqtt_client, ACTIVE_TOPIC, b"true".to_vec(), &props)
-            .await
-            .change_context_lazy(into_context)?;
         Ok(())
     }
 

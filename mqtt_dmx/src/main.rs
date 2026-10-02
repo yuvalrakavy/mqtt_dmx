@@ -28,6 +28,10 @@ use service::ServiceConfig;
 /// runtime waits for without limit (no-hang F1, Store 3b re-review X1).
 const RUNTIME_DRAIN: Duration = Duration::from_secs(1);
 
+/// How long the logging may take to start before the bridge goes on without it: past tracing-init's
+/// own bounds on its destinations' starts (5 s each, the file's and GELF's).
+const LOGGING_START: Duration = Duration::from_secs(15);
+
 fn main() -> ExitCode {
     let (args, _) = opts! {
         synopsis "MQTT DMX Controller";
@@ -45,6 +49,8 @@ fn main() -> ExitCode {
     let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
         Ok(runtime) => runtime,
         Err(e) => {
+            // Before any stop handler, so a SIGTERM still ends the process should this write block
+            // (no-hang B2's exemption: nothing here is bounded yet, and nothing needs to be).
             eprintln!("mqtt_dmx: cannot start the async runtime: {e}");
             return ExitCode::FAILURE;
         }
@@ -66,30 +72,28 @@ async fn run(mqtt_broker_address: String, storage_path: PathBuf) -> Option<traci
     // which ends the process without the service's shutdown or the log's flush.
     let mut stop = StopSignals::install();
 
-    // Logging never stops the bridge: a destination that cannot start (an unwritable `logs`
-    // directory, an unresolvable log host) is skipped, whatever logging.toml says or wherever it
-    // is found (an upward search from the working directory), and should init itself fail the
-    // bridge runs without logging rather than panic. Keep the guard for all of main: dropping it
-    // shuts down tracing-init's OpenTelemetry providers (guard.rs), so spans and OTLP logs would
-    // stop right after startup.
-    let guard = match tracing_init::TracingInit::builder("mqtt_dmx")
-        .log_to_file(true)
-        .log_to_gelf_server(true)
-        .file_prefix("dmx")
-        .file_path("logs")
-        .on_destination_error(tracing_init::types::OnDestinationError::Skip)
-        .init()
-    {
-        Ok(guard) => Some(guard),
-        Err(e) => {
-            eprintln!("mqtt_dmx: logging did not start ({e}); running without it");
-            None
-        }
+    // Starting the logging reads its configuration, opens its file and resolves its log host: the
+    // filesystem and a name lookup, which can stall (a hung disk or mount, a resolver that does not
+    // answer). tracing-init bounds each destination's start at 5 s, not its configuration's read;
+    // the whole start runs on a blocking thread, raced against the stop (no-hang F3, Store 3b review
+    // round 3, B1), under a bound past which the bridge goes on without a log — logging never stops
+    // the bridge. A thread stuck there is left to the runtime's bounded end (`main-run`); should it
+    // finish later, its guard is dropped with it, which stops the log.
+    // WAIT: logging-start
+    let guard = tokio::select! {
+        started = tokio::time::timeout(LOGGING_START, tokio::task::spawn_blocking(start_logging)) => match started {
+            Ok(Ok(guard)) => guard,
+            // The start panicked, or is still stuck: no log to say so in.
+            Ok(Err(_)) | Err(_) => None,
+        },
+        // Before there is a log: nothing to say it in (B2: never straight to stdout or stderr).
+        _ = stop.recv() => return None,
     };
 
     info!("Starting {}", get_version());
     if let Some(guard) = &guard {
-        println!("Logging: {guard}");
+        // Through the log alone: its writers drop lines rather than wait, where stdout, a
+        // supervisor's pipe that has stopped draining, would block (Store 3b review round 3, B2).
         info!("Logging: {guard}");
     }
     // Now that there is a log to say it in (no-hang F3).
@@ -122,6 +126,31 @@ async fn run(mqtt_broker_address: String, storage_path: PathBuf) -> Option<traci
     // Bounded (`Service::stop`).
     let _ = service::Service::stop(service).await;
     guard
+}
+
+/// The logging, on the blocking thread `run` races against the stop. It never stops the bridge: a
+/// destination that cannot start (an unwritable `logs` directory, an unresolvable log host, either
+/// stuck past tracing-init's 5 s) is skipped, whatever logging.toml says or wherever it is found (an
+/// upward search from the working directory), and should init itself fail the bridge runs without
+/// logging rather than panic. That failure is said on stderr from here, the one message before
+/// there is a log: a stalled stderr then holds this thread alone, which the stop does not wait for.
+/// The guard is kept for all of main: dropping it shuts down tracing-init's writers and
+/// OpenTelemetry providers (guard.rs), so the log would stop.
+fn start_logging() -> Option<tracing_init::TracingGuard> {
+    match tracing_init::TracingInit::builder("mqtt_dmx")
+        .log_to_file(true)
+        .log_to_gelf_server(true)
+        .file_prefix("dmx")
+        .file_path("logs")
+        .on_destination_error(tracing_init::types::OnDestinationError::Skip)
+        .init()
+    {
+        Ok(guard) => Some(guard),
+        Err(e) => {
+            eprintln!("mqtt_dmx: logging did not start ({e}); running without it");
+            None
+        }
+    }
 }
 
 /// SIGTERM — systemd's stop — and SIGINT (Ctrl-C): either one stops the bridge through its bounded

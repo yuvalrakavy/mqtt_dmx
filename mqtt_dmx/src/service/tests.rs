@@ -40,11 +40,12 @@ fn error_reports(broker: &FakeBroker) -> Vec<String> {
 }
 
 /// The bridge says it is active only once it has subscribed (no-hang F4): an `Active=true` before
-/// the subscription is a bridge the Store takes as ready while its commands go nowhere. The broker
-/// holds its acks with room for one publish in flight, so it sees exactly what the bridge sends
-/// first, and nothing after it until the acks are released. Every connection also republishes the
-/// retained model from the bridge's state — its last error report included — for a broker that
-/// lost its retained messages.
+/// the subscription is a bridge the Store takes as ready while its commands go nowhere. Then, after
+/// `Active`, every connection republishes the retained model from the bridge's state — its version
+/// and its last error report — for a broker that lost its retained messages (the fleet's order:
+/// subscribe, `Active`, the model; Store 3b review round 3, X4). The broker holds its acks with room
+/// for one publish in flight, so it sees exactly what the bridge sends first, and nothing after it
+/// until the acks are released.
 #[tokio::test(flavor = "multi_thread")]
 async fn active_goes_out_only_after_the_subscription() {
     const REPORT: &str = r#"{"time":"then","message":"an earlier session's error"}"#;
@@ -66,6 +67,8 @@ async fn active_goes_out_only_after_the_subscription() {
             "the bridge published {:?} before it subscribed",
             broker.received().iter().map(|r| r.topic.clone()).collect::<Vec<_>>()
         );
+        let first = broker.received()[0].topic.clone();
+        assert_eq!(first, "DMX/Active", "the first publish after the subscription was {first}, not Active=true");
         broker.release_acks();
         assert!(
             matches!(tokio::time::timeout(Duration::from_secs(10), announce).await, Ok(Ok(Ok(())))),
@@ -73,11 +76,11 @@ async fn active_goes_out_only_after_the_subscription() {
         );
         // Queued is not delivered: the pump sends the rest as the acks come back.
         assert!(
-            broker.wait_until(Duration::from_secs(10), |b| !b.received_on("DMX/Active").is_empty()).await,
-            "Active=true never arrived"
+            broker.wait_until(Duration::from_secs(10), |b| !b.received_on("DMX/LastError").is_empty()).await,
+            "the model never arrived"
         );
         let topics: Vec<_> = broker.received().iter().map(|r| r.topic.clone()).collect();
-        assert_eq!(topics.last().map(String::as_str), Some("DMX/Active"), "Active=true was not the last of the announcement: {topics:?}");
+        assert_eq!(topics, ["DMX/Active", "DMX/Version", "DMX/LastError"], "not subscribe, Active, then the model");
         let republished = broker.received_on("DMX/LastError");
         assert!(
             republished.len() == 1 && republished[0].retain && republished[0].payload == REPORT.as_bytes(),
