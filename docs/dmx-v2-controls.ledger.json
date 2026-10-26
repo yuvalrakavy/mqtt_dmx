@@ -17,6 +17,40 @@
     "verdict": "RED"
    }
   },
+  "completion_encoding_headroom_is_reserved": {
+   "last_real": {
+    "at": "2026-10-26T15:29:00Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:c5a05fb72bd2d58a",
+     "guard": "item:22d6d6499d46caff",
+     "row": "57c8b642d54a2ec1",
+     "test": "test:da0e2077bdb24efc"
+    },
+    "path": "cargo",
+    "secs": 3.2,
+    "sha": "3dd12c5024471fa09ae665191c02a5b99c4ebe6b",
+    "verdict": "RED"
+   }
+  },
+  "completion_revision_headroom_is_reserved": {
+   "last_real": {
+    "at": "2026-10-26T15:27:31Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:a3fdb0d02dbfa9d8",
+     "guard": "item:0bba21ed2d37a70f",
+     "row": "3923c63fe6456c6a",
+     "test": "test:ddd44168b994e7dd"
+    },
+    "path": "cargo",
+    "secs": 1.9,
+    "sha": "3dd12c5024471fa09ae665191c02a5b99c4ebe6b",
+    "verdict": "RED"
+   }
+  },
   "configuration_content_digest_is_checked": {
    "last_real": {
     "at": "2026-10-26T13:33:59Z",
@@ -85,6 +119,40 @@
     "verdict": "RED"
    }
   },
+  "installation_rechecks_deadline_after_preparation": {
+   "last_real": {
+    "at": "2026-10-26T15:27:26Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:e95cbda119fea575",
+     "guard": "item:4a90567cf11e7e10",
+     "row": "5fce75eb4045baff",
+     "test": "test:a7f5adbaa96ba939"
+    },
+    "path": "cargo",
+    "secs": 1.9,
+    "sha": "3dd12c5024471fa09ae665191c02a5b99c4ebe6b",
+    "verdict": "RED"
+   }
+  },
+  "mapping_generation_rotation_is_enforced": {
+   "last_real": {
+    "at": "2026-10-26T15:27:35Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:e95cbda119fea575",
+     "guard": "item:33f3efcadd878a8e",
+     "row": "295bdc21b0154fe5",
+     "test": "test:3f1adab4ce535998"
+    },
+    "path": "cargo",
+    "secs": 1.9,
+    "sha": "3dd12c5024471fa09ae665191c02a5b99c4ebe6b",
+    "verdict": "RED"
+   }
+  },
   "older_operation_cannot_undo_stop": {
    "last_real": {
     "at": "2026-10-26T13:23:05Z",
@@ -133,6 +201,23 @@
     "path": "cargo",
     "secs": 1.9,
     "sha": "7f5814d60a892ec01268f3dbb33f0801ee2c92f7",
+    "verdict": "RED"
+   }
+  },
+  "remapping_requires_completed_off": {
+   "last_real": {
+    "at": "2026-10-26T15:27:33Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:e95cbda119fea575",
+     "guard": "item:33f3efcadd878a8e",
+     "row": "8fe5245b9d777941",
+     "test": "test:00783191c6d6661d"
+    },
+    "path": "cargo",
+    "secs": 2.0,
+    "sha": "3dd12c5024471fa09ae665191c02a5b99c4ebe6b",
     "verdict": "RED"
    }
   },

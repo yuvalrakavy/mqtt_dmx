@@ -139,3 +139,58 @@ crate = "mqtt_dmx"
 target = "test:recovery"
 test = "invalid_installation_is_refused_instead_of_partially_restored"
 expect_text = "s.encode().is_err()"
+
+[[control]]
+name = "installation_rechecks_deadline_after_preparation"
+guard = "installation_commit_deadline"
+file = "mqtt_dmx/src/installation.rs"
+anchor = 'deadline.is_some_and(|deadline| now >= deadline)'
+replacement = 'false'
+crate = "mqtt_dmx"
+target = "test:installation"
+test = "preparation_expiry_rejects_without_mutating_live_state_or_high_water"
+expect_text = "preparation_expiry_rejects_without_mutating_live_state_or_high_water"
+
+[[control]]
+name = "completion_encoding_headroom_is_reserved"
+guard = "snapshot_completion_encoding_reservation"
+file = "mqtt_dmx/src/recovery.rs"
+anchor = 'reserved.canonical()?.len()'
+replacement = '0'
+crate = "mqtt_dmx"
+target = "test:installation"
+test = "completion_growth_is_reserved_before_accepting_a_running_snapshot"
+expect_text = 'called `Result::unwrap_err()` on an `Ok` value'
+
+[[control]]
+name = "completion_revision_headroom_is_reserved"
+guard = "snapshot_completion_revision_reservation"
+file = "mqtt_dmx/src/recovery.rs"
+anchor = 'self.revision.0 > u64::MAX - running'
+replacement = 'false'
+crate = "mqtt_dmx"
+target = "test:installation"
+test = "restored_revision_reserves_completion_headroom"
+expect_text = "Installation::restore(document.as_bytes()).is_err()"
+
+[[control]]
+name = "remapping_requires_completed_off"
+guard = "installation_completed_off_mapping"
+file = "mqtt_dmx/src/installation.rs"
+anchor = 'mapping_changed && !old.completed_off()'
+replacement = 'false'
+crate = "mqtt_dmx"
+target = "test:installation"
+test = "powered_off_running_or_stopped_array_cannot_be_deleted"
+expect_text = "powered_off_running_or_stopped_array_cannot_be_deleted"
+
+[[control]]
+name = "mapping_generation_rotation_is_enforced"
+guard = "installation_mapping_generation"
+file = "mqtt_dmx/src/installation.rs"
+anchor = '(definition.generation == previous.generation) == mapping_changed'
+replacement = 'false'
+crate = "mqtt_dmx"
+target = "test:installation"
+test = "generation_rotates_exactly_when_physical_ownership_changes"
+expect_text = "generation_rotates_exactly_when_physical_ownership_changes"

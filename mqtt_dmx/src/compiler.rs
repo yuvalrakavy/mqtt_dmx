@@ -54,6 +54,7 @@ impl CompiledConfiguration {
             if !identities.insert(id)
                 || !names.insert(&array.name)
                 || !generations.insert(&array.generation)
+                || !identities.insert(&array.generation)
             {
                 return Err(invalid("duplicate array identity, name or generation"));
             }

@@ -28,6 +28,7 @@ pub struct Command {
     pub restart: bool,
 }
 
+#[derive(Clone)]
 pub struct OrderedArray {
     owned: Vec<Channel>,
     player: Player,
@@ -97,6 +98,18 @@ impl OrderedArray {
     pub fn output(&self, channel: &Channel) -> u8 {
         self.player.output(channel)
     }
+    pub(crate) fn completed_off(&self) -> bool {
+        !self.playback.level.is_on() && self.player.status() == Status::Completed
+    }
+    pub(crate) fn playback(&self) -> &Playback {
+        &self.playback
+    }
+    pub(crate) fn remapped_playback(&self, generation: Id) -> Playback {
+        let mut playback = self.playback.clone();
+        playback.revision = self.high_water.revision;
+        playback.generation = generation;
+        playback
+    }
     pub fn receipt(&self) -> Receipt {
         Receipt {
             revision: self.high_water.revision,
@@ -112,20 +125,13 @@ impl OrderedArray {
         deadline: Option<Instant>,
         now: Instant,
     ) -> Result<Receipt, Error> {
-        self.guard(
-            &request.history,
-            &request.authority,
-            &request.generation,
-            deadline,
-            now,
-        )?;
+        if let Some(receipt) = self.validate_desired(&request, deadline, now)? {
+            return Ok(receipt);
+        }
         let stamp = OperationStamp {
             revision: request.revision,
             fingerprint: request.fingerprint()?,
         };
-        if classify_operation(Some(&self.high_water), &stamp)? == Admission::Duplicate {
-            return Ok(self.last_receipt.clone());
-        }
         // Construct before mutation, even when equal settings preserve the live
         // player: bad compiled candidates must never advance the high-water mark.
         let candidate = Player::start(
@@ -150,13 +156,14 @@ impl OrderedArray {
         self.playback = request;
         Ok(self.commit(stamp))
     }
-    pub fn command(
-        &mut self,
-        request: Command,
-        execution: Id,
+    /// Shared by the runtime admission view and the serialized owner. A cached
+    /// receipt is usable only after identity, expiry and operation ordering pass.
+    pub fn validate_desired(
+        &self,
+        request: &Playback,
         deadline: Option<Instant>,
         now: Instant,
-    ) -> Result<Receipt, Error> {
+    ) -> Result<Option<Receipt>, Error> {
         self.guard(
             &request.history,
             &request.authority,
@@ -164,27 +171,46 @@ impl OrderedArray {
             deadline,
             now,
         )?;
+        let stamp = OperationStamp {
+            revision: request.revision,
+            fingerprint: request.fingerprint()?,
+        };
+        if classify_operation(Some(&self.high_water), &stamp)? == Admission::Duplicate {
+            return Ok(Some(self.last_receipt.clone()));
+        }
+        Ok(None)
+    }
+    pub fn command(
+        &mut self,
+        request: Command,
+        execution: Id,
+        deadline: Option<Instant>,
+        now: Instant,
+    ) -> Result<Receipt, Error> {
+        self.command_with_effect(request, execution, None, deadline, now)
+    }
+    pub(crate) fn command_with_effect(
+        &mut self,
+        request: Command,
+        execution: Id,
+        effect: Option<Effect>,
+        deadline: Option<Instant>,
+        now: Instant,
+    ) -> Result<Receipt, Error> {
+        if let Some(receipt) = self.validate_command(&request, deadline, now)? {
+            return Ok(receipt);
+        }
         let canonical = canonicalize_json(&serde_json::to_vec(&request)?, 16 * 1024)?;
         let stamp = OperationStamp {
             revision: request.revision,
             fingerprint: sha256(canonical.as_bytes()),
         };
-        if classify_operation(Some(&self.high_water), &stamp)? == Admission::Duplicate {
-            return Ok(self.last_receipt.clone());
-        }
-        if request.expected_playback != self.playback.revision
-            || request.expected_execution != self.execution
-        {
-            return Err(Error::Invalid(
-                "command playback/execution precondition failed".into(),
-            ));
-        }
         if request.restart {
             self.check_execution(&execution)?;
             let snapshot = self.player.snapshot();
             let restarted = Player::start(
                 self.owned.clone(),
-                snapshot.effect,
+                effect.unwrap_or(snapshot.effect),
                 snapshot.initial,
                 self.playback.level,
             )?;
@@ -195,6 +221,36 @@ impl OrderedArray {
         }
         self.last_operation = Operation::Command(request);
         Ok(self.commit(stamp))
+    }
+    pub fn validate_command(
+        &self,
+        request: &Command,
+        deadline: Option<Instant>,
+        now: Instant,
+    ) -> Result<Option<Receipt>, Error> {
+        self.guard(
+            &request.history,
+            &request.authority,
+            &request.generation,
+            deadline,
+            now,
+        )?;
+        let canonical = canonicalize_json(&serde_json::to_vec(request)?, 16 * 1024)?;
+        let stamp = OperationStamp {
+            revision: request.revision,
+            fingerprint: sha256(canonical.as_bytes()),
+        };
+        if classify_operation(Some(&self.high_water), &stamp)? == Admission::Duplicate {
+            return Ok(Some(self.last_receipt.clone()));
+        }
+        if request.expected_playback != self.playback.revision
+            || request.expected_execution != self.execution
+        {
+            return Err(Error::Invalid(
+                "command playback/execution precondition failed".into(),
+            ));
+        }
+        Ok(None)
     }
     pub fn checkpoint(&self) -> Result<Checkpoint, Error> {
         let mut player = self.player.snapshot();

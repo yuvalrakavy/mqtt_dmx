@@ -61,6 +61,7 @@ pub struct Snapshot {
     pub status: Status,
 }
 
+#[derive(Clone)]
 pub struct Player {
     effect: Effect,
     initial: BTreeMap<Channel, ChannelPlanes>,
@@ -258,6 +259,7 @@ struct Step {
     consumed: bool,
 }
 
+#[derive(Clone)]
 enum Runtime {
     Fade {
         ticks: u32,
