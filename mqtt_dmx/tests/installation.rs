@@ -605,3 +605,236 @@ fn generation_rotates_exactly_when_physical_ownership_changes() {
     i.configure(c, BTreeMap::from([(id(2), id(8))]), None, || now)
         .unwrap();
 }
+
+#[test]
+fn depth_probe_running_instant_prefix_is_admitted_and_recovers() {
+    use dmx_protocol::configuration::{NamedEffect, Node, Ticks};
+    for parallel in [false, true] {
+        let mut c = config();
+        c.content.arrays.get_mut(&id(2)).unwrap().effects.insert(
+            id(20),
+            NamedEffect {
+                name: "instant_then_wait".into(),
+                description: "".into(),
+                definition: {
+                    let nodes = vec![
+                        Node::Fade {
+                            lights: "@all".into(),
+                            ticks: Ticks::Number(0),
+                            target: "s(200)".into(),
+                            no_dimming: false,
+                        },
+                        Node::Delay {
+                            ticks: Ticks::Number(4),
+                        },
+                    ];
+                    if parallel {
+                        Node::Parallel { nodes }
+                    } else {
+                        Node::Sequence { nodes }
+                    }
+                },
+            },
+        );
+        rehash(&mut c);
+        let mut i = Installation::initialize(c, BTreeMap::from([(id(2), id(6))])).unwrap();
+        let mut p = request(1);
+        p.effect = Some(id(20));
+        i.desired(&id(2), p, id(7), None, Instant::now)
+            .expect("valid instant-prefix running effect must be accepted");
+        assert_eq!(i.output(&id(2), &channel()), 200);
+        let restart = Command {
+            revision: Revision(2),
+            expected_playback: Revision(1),
+            expected_execution: id(7),
+            history: id(4),
+            authority: id(5),
+            generation: id(3),
+            restart: true,
+        };
+        i.command(&id(2), restart, id(8), None, Instant::now)
+            .unwrap();
+        let mut recovered = Installation::restore(i.document().as_bytes()).unwrap();
+        assert_eq!(recovered.output(&id(2), &channel()), 200);
+        assert_eq!(recovered.receipt(&id(2)).unwrap().status, Status::Running);
+        for _ in 0..4 {
+            recovered.tick().unwrap();
+        }
+        assert_eq!(recovered.receipt(&id(2)).unwrap().status, Status::Completed);
+        assert_eq!(recovered.output(&id(2), &channel()), 200);
+    }
+}
+
+#[test]
+fn depth_probe_generation_cannot_be_recycled_through_another_array() {
+    let mut c = config();
+    let mut second = c.content.arrays[&id(2)].clone();
+    second.name = "two".into();
+    second.generation = id(9);
+    second.lights = BTreeMap::from([("all".into(), "2".into())]);
+    c.content.arrays.insert(id(8), second);
+    rehash(&mut c);
+    let mut i =
+        Installation::initialize(c, BTreeMap::from([(id(2), id(6)), (id(8), id(10))])).unwrap();
+    // Generations retire for their original array even if another array would
+    // keep the UUID in the installation-wide set. Fresh remaps remain valid.
+    for (a_gen, b_gen, a_channel, b_channel, accepted, a_exec, b_exec) in [
+        (9, 3, "3", "4", false, 11, 12),
+        (21, 22, "3", "4", true, 11, 12),
+        (3, 9, "1", "2", false, 13, 14),
+    ] {
+        let mut c = next_config(&i);
+        let a = c.content.arrays.get_mut(&id(2)).unwrap();
+        a.generation = id(a_gen);
+        a.lights.insert("all".into(), a_channel.into());
+        let b = c.content.arrays.get_mut(&id(8)).unwrap();
+        b.generation = id(b_gen);
+        b.lights.insert("all".into(), b_channel.into());
+        rehash(&mut c);
+        let before = i.document();
+        let result = i.configure(
+            c,
+            BTreeMap::from([(id(2), id(a_exec)), (id(8), id(b_exec))]),
+            None,
+            Instant::now,
+        );
+        if accepted {
+            result.unwrap();
+        } else {
+            assert!(result.is_err(), "a generation cannot move to another array");
+            assert_eq!(i.document(), before);
+        }
+    }
+    let result = i.desired(&id(2), request(1), id(15), None, Instant::now);
+    assert!(result.is_err(), "delayed Desired from the original mapping became admissible after generation recycling: {result:?}");
+}
+
+#[test]
+fn new_array_cannot_take_the_generation_of_an_array_removed_in_the_same_config() {
+    let mut i = installation();
+    let mut c = next_config(&i);
+    let mut array = c.content.arrays.remove(&id(2)).unwrap();
+    array.name = "replacement".into();
+    c.content.arrays.insert(id(8), array);
+    rehash(&mut c);
+    assert!(i
+        .configure(c, BTreeMap::from([(id(8), id(9))]), None, Instant::now)
+        .is_err());
+}
+
+#[test]
+fn changed_effect_selections_must_be_published_even_when_no_execution_starts() {
+    for off_override in [false, true] {
+        let mut i = installation();
+        let mut p = request(1);
+        p.level = Level::OFF;
+        if off_override {
+            p.off_effect = Some(id(99));
+        } else {
+            p.effect = Some(id(99));
+        }
+        let before = i.document();
+        assert!(i.desired(&id(2), p, id(7), None, Instant::now).is_err());
+        assert_eq!(i.document(), before);
+    }
+}
+
+#[test]
+fn depth_probe_brightness_uses_existing_plan_until_next_execution() {
+    use dmx_protocol::configuration::{NamedEffect, Node, Ticks};
+    for state in [Status::Running, Status::Completed, Status::Stopped] {
+        let mut c = config();
+        c.content.arrays.get_mut(&id(2)).unwrap().effects.insert(
+            id(20),
+            NamedEffect {
+                name: "custom".into(),
+                description: "".into(),
+                definition: Node::Fade {
+                    lights: "@all".into(),
+                    ticks: Ticks::Number(4),
+                    target: "s(200)".into(),
+                    no_dimming: false,
+                },
+            },
+        );
+        rehash(&mut c);
+        let mut i = Installation::initialize(c, BTreeMap::from([(id(2), id(6))])).unwrap();
+        let mut p = request(1);
+        p.effect = Some(id(20));
+        i.desired(&id(2), p.clone(), id(7), None, Instant::now)
+            .unwrap();
+        i.tick().unwrap();
+        if state == Status::Completed {
+            for _ in 0..3 {
+                i.tick().unwrap();
+            }
+        } else if state == Status::Stopped {
+            let stop = Command {
+                revision: Revision(2),
+                expected_playback: Revision(1),
+                expected_execution: id(7),
+                history: id(4),
+                authority: id(5),
+                generation: id(3),
+                restart: false,
+            };
+            i.command(&id(2), stop, id(8), None, Instant::now).unwrap();
+        }
+        let mut c = next_config(&i);
+        c.content
+            .arrays
+            .get_mut(&id(2))
+            .unwrap()
+            .effects
+            .get_mut(&id(20))
+            .unwrap()
+            .definition = Node::Fade {
+            lights: "@all".into(),
+            ticks: Ticks::Number(4),
+            target: "s(`new_required_parameter`)".into(),
+            no_dimming: false,
+        };
+        rehash(&mut c);
+        i.configure(c, BTreeMap::new(), None, Instant::now).unwrap();
+        p.revision = Revision(3);
+        p.level = Level::try_from(500).unwrap();
+        let receipt = i.desired(&id(2), p.clone(), id(8), None, Instant::now).expect(
+        "brightness keeps the accepted plan; edited definition takes effect only on next execution",
+    );
+        assert_eq!(receipt.execution, id(7));
+        assert_eq!(receipt.status, state);
+        i.tick().unwrap();
+        assert_eq!(
+            i.output(&id(2), &channel()),
+            match state {
+                Status::Running => 50,
+                Status::Completed => 100,
+                Status::Stopped => 25,
+            }
+        );
+        let restart = Command {
+            revision: Revision(4),
+            expected_playback: Revision(3),
+            expected_execution: id(7),
+            history: id(4),
+            authority: id(5),
+            generation: id(3),
+            restart: true,
+        };
+        assert!(i
+            .command(&id(2), restart, id(9), None, Instant::now)
+            .unwrap_err()
+            .to_string()
+            .contains("missing parameter"));
+        assert_eq!(i.receipt(&id(2)).unwrap().revision, Revision(3));
+        p.revision = Revision(4);
+        p.parameters
+            .insert("new_required_parameter".into(), "240".into());
+        assert_eq!(
+            i.desired(&id(2), p, id(9), None, Instant::now)
+                .unwrap()
+                .status,
+            Status::Running
+        );
+    }
+}

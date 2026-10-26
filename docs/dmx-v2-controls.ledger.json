@@ -17,6 +17,40 @@
     "verdict": "RED"
    }
   },
+  "brightness_retains_the_accepted_plan_after_definition_edits": {
+   "last_real": {
+    "at": "2026-10-26T16:07:52Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:cf315b484841b4a8",
+     "guard": "item:791cb164e3e4b279",
+     "row": "e82108146de91962",
+     "test": "test:96939b5e9cf27e59"
+    },
+    "path": "cargo",
+    "secs": 2.2,
+    "sha": "3e1466308065d850f1f30ac1e25a01d7ca93fa2e",
+    "verdict": "RED"
+   }
+  },
+  "changed_idle_effect_selections_require_published_definitions": {
+   "last_real": {
+    "at": "2026-10-26T16:07:54Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:cf315b484841b4a8",
+     "guard": "item:791cb164e3e4b279",
+     "row": "53987b82781458fb",
+     "test": "test:a5eac45553170a1d"
+    },
+    "path": "cargo",
+    "secs": 2.2,
+    "sha": "3e1466308065d850f1f30ac1e25a01d7ca93fa2e",
+    "verdict": "RED"
+   }
+  },
   "completion_encoding_headroom_is_reserved": {
    "last_real": {
     "at": "2026-10-26T15:29:00Z",
@@ -187,6 +221,23 @@
     "verdict": "RED"
    }
   },
+  "generation_retirement_remembers_its_original_array": {
+   "last_real": {
+    "at": "2026-10-26T16:07:50Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:cf315b484841b4a8",
+     "guard": "item:a8d65a7ca4508369",
+     "row": "4f5fc1cabb386893",
+     "test": "test:b0746e7b23523785"
+    },
+    "path": "cargo",
+    "secs": 2.3,
+    "sha": "3e1466308065d850f1f30ac1e25a01d7ca93fa2e",
+    "verdict": "RED"
+   }
+  },
   "global_defaults_work_without_an_array_override": {
    "last_real": {
     "at": "2026-10-26T15:51:53Z",
@@ -235,6 +286,23 @@
     "path": "cargo",
     "secs": 1.9,
     "sha": "3dd12c5024471fa09ae665191c02a5b99c4ebe6b",
+    "verdict": "RED"
+   }
+  },
+  "instant_prefix_restore_compares_canonical_running_planes": {
+   "last_real": {
+    "at": "2026-10-26T16:09:05Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:1aa4d38543893d4f",
+     "guard": "item:7d19009bb1cb4009",
+     "row": "3c30ab3cb7cb51dc",
+     "test": "test:c2e3668e83b1dc6b"
+    },
+    "path": "cargo",
+    "secs": 2.2,
+    "sha": "3e1466308065d850f1f30ac1e25a01d7ca93fa2e",
     "verdict": "RED"
    }
   },

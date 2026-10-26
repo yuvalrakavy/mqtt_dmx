@@ -104,6 +104,15 @@ impl OrderedArray {
     pub(crate) fn playback(&self) -> &Playback {
         &self.playback
     }
+    pub(crate) fn accepted_effect(&self) -> Effect {
+        self.player.effect().clone()
+    }
+    pub(crate) fn starts_execution(&self, request: &Playback) -> bool {
+        let changed_selection = request.effect != self.playback.effect
+            || request.parameters != self.playback.parameters;
+        (request.level.is_on() && (!self.playback.level.is_on() || changed_selection))
+            || (!request.level.is_on() && self.playback.level.is_on())
+    }
     pub(crate) fn remapped_playback(&self, generation: Id) -> Playback {
         let mut playback = self.playback.clone();
         playback.revision = self.high_water.revision;
@@ -140,12 +149,7 @@ impl OrderedArray {
             self.player.snapshot().held,
             request.level,
         )?;
-        let changed_selection = request.effect != self.playback.effect
-            || request.parameters != self.playback.parameters;
-        let restart = (request.level.is_on()
-            && (!self.playback.level.is_on() || changed_selection))
-            || (!request.level.is_on() && self.playback.level.is_on());
-        if restart {
+        if self.starts_execution(&request) {
             self.check_execution(&execution)?;
             self.player = candidate;
             self.execution = execution;
@@ -253,12 +257,7 @@ impl OrderedArray {
         Ok(None)
     }
     pub fn checkpoint(&self) -> Result<Checkpoint, Error> {
-        let mut player = self.player.snapshot();
-        if player.status == Status::Running {
-            // Running recovery restarts from initial planes. Keeping frame output
-            // here would change the document without a transition/revision.
-            player.held = player.initial.clone();
-        }
+        let player = recovery_snapshot(&self.player);
         Ok(Checkpoint {
             playback: self.playback.encode()?,
             execution: self.execution.clone(),
@@ -315,7 +314,8 @@ impl OrderedArray {
         let status = checkpoint.player.status;
         let expected_player = checkpoint.player.clone();
         let player = Player::restore(owned.clone(), checkpoint.player)?;
-        if player.status() != status || player.snapshot() != expected_player {
+        let restored_checkpoint = recovery_snapshot(&player);
+        if player.status() != status || restored_checkpoint != expected_player {
             return Err(invalid());
         }
         Ok(Self {
@@ -364,4 +364,14 @@ impl OrderedArray {
         }
         Ok(())
     }
+}
+
+fn recovery_snapshot(player: &Player) -> crate::engine::Snapshot {
+    let mut snapshot = player.snapshot();
+    if snapshot.status == Status::Running {
+        // Tick-zero prefixes already ran in the live player. The canonical
+        // running image records original planes, without an execution position.
+        snapshot.held = snapshot.initial.clone();
+    }
+    snapshot
 }

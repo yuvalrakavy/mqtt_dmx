@@ -309,3 +309,47 @@ crate = "mqtt_dmx"
 target = "test:installation"
 test = "probe_two_arrays_keep_independent_candidates_and_completion"
 expect_text = "second array candidate must not replace first array checkpoint"
+
+[[control]]
+name = "instant_prefix_restore_compares_canonical_running_planes"
+guard = "running_checkpoint_comparison"
+file = "mqtt_dmx/src/ordered_array.rs"
+anchor = 'recovery_snapshot(&player)'
+replacement = 'player.snapshot()'
+crate = "mqtt_dmx"
+target = "test:installation"
+test = "depth_probe_running_instant_prefix_is_admitted_and_recovers"
+expect_text = "valid instant-prefix running effect must be accepted"
+
+[[control]]
+name = "generation_retirement_remembers_its_original_array"
+guard = "array_scoped_generation_retirement"
+file = "mqtt_dmx/src/installation.rs"
+anchor = 'retired_ids.insert(previous.generation.clone());'
+replacement = ''
+crate = "mqtt_dmx"
+target = "test:installation"
+test = "depth_probe_generation_cannot_be_recycled_through_another_array"
+expect_text = "a generation cannot move to another array"
+
+[[control]]
+name = "brightness_retains_the_accepted_plan_after_definition_edits"
+guard = "nonexecution_preserves_accepted_plan"
+file = "mqtt_dmx/src/installation.rs"
+anchor = 'if self.array(id)?.starts_execution(&request)'
+replacement = 'if true'
+crate = "mqtt_dmx"
+target = "test:installation"
+test = "depth_probe_brightness_uses_existing_plan_until_next_execution"
+expect_text = "brightness keeps the accepted plan"
+
+[[control]]
+name = "changed_idle_effect_selections_require_published_definitions"
+guard = "changed_selection_publication"
+file = "mqtt_dmx/src/installation.rs"
+anchor = '!self.configuration.has_effect(id, effect)'
+replacement = 'false'
+crate = "mqtt_dmx"
+target = "test:installation"
+test = "changed_effect_selections_must_be_published_even_when_no_execution_starts"
+expect_text = "changed_effect_selections_must_be_published_even_when_no_execution_starts"

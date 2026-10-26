@@ -107,6 +107,9 @@ impl Player {
     pub fn status(&self) -> Status {
         self.status
     }
+    pub(crate) fn effect(&self) -> &Effect {
+        &self.effect
+    }
     pub fn set_level(&mut self, level: Level) {
         self.level = level;
     }

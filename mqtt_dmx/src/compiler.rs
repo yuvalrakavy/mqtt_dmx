@@ -177,6 +177,13 @@ impl CompiledConfiguration {
     pub fn content(&self) -> &Content {
         &self.configuration.content
     }
+    pub(crate) fn has_effect(&self, array: &Id, effect: &Id) -> bool {
+        self.content()
+            .arrays
+            .get(array)
+            .is_some_and(|array| array.effects.contains_key(effect))
+            || self.content().effects.contains_key(effect)
+    }
     pub fn configuration(&self) -> &Configuration {
         &self.configuration
     }

@@ -157,6 +157,19 @@ impl Installation {
             }
         }
         retired_ids.extend(previous_ids.difference(&next_ids).cloned());
+        // A generation belongs to one array. Retire it when that array changes
+        // or disappears, even if another proposed array would keep its UUID live.
+        for (id, previous) in &self.configuration.content().arrays {
+            if compiled
+                .content()
+                .arrays
+                .get(id)
+                .map(|array| &array.generation)
+                != Some(&previous.generation)
+            {
+                retired_ids.insert(previous.generation.clone());
+            }
+        }
         if retired_ids.len() > 1024 || next_ids.iter().any(|id| retired_ids.contains(id)) {
             return Err(Error::Invalid(
                 "configuration reuses retired identity or exceeds retirement budget".into(),
@@ -285,17 +298,36 @@ impl Installation {
             check_deadline(deadline, clock())?;
             return Ok(receipt);
         }
-        let effect = self.configuration.effect(
-            id,
-            if request.level.is_on() {
-                request.effect.as_ref()
-            } else {
-                request.off_effect.as_ref()
-            },
-            &request.parameters,
-            !request.level.is_on(),
-            request.fade_ms,
-        )?;
+        let previous = self.array(id)?.playback();
+        for (selected, old) in [
+            (&request.effect, &previous.effect),
+            (&request.off_effect, &previous.off_effect),
+        ] {
+            if selected != old
+                && selected
+                    .as_ref()
+                    .is_some_and(|effect| !self.configuration.has_effect(id, effect))
+            {
+                return Err(Error::Invalid(
+                    "changed effect selection is not published for this array".into(),
+                ));
+            }
+        }
+        let effect = if self.array(id)?.starts_execution(&request) {
+            self.configuration.effect(
+                id,
+                if request.level.is_on() {
+                    request.effect.as_ref()
+                } else {
+                    request.off_effect.as_ref()
+                },
+                &request.parameters,
+                !request.level.is_on(),
+                request.fade_ms,
+            )?
+        } else {
+            self.array(id)?.accepted_effect()
+        };
         let mut candidate = self.array(id)?.clone();
         let receipt = candidate.desired(request, effect, execution, deadline, admission_time)?;
         self.commit(id, candidate, receipt, deadline, clock)
