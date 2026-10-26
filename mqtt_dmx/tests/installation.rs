@@ -838,3 +838,59 @@ fn depth_probe_brightness_uses_existing_plan_until_next_execution() {
         );
     }
 }
+
+#[test]
+fn confirm_running_normalization_rejects_forged_held_planes() {
+    use mqtt_dmx::recovery::Snapshot;
+    let mut i = installation();
+    i.desired(&id(2), request(1), id(7), None, Instant::now)
+        .unwrap();
+    for forged in 0..4 {
+        let mut snapshot: Snapshot = serde_json::from_str(&i.document()).unwrap();
+        let held = &mut snapshot.arrays.get_mut(&id(2)).unwrap().player.held;
+        match forged {
+            0 => held[0].planes.dimmable = 1,
+            1 => held[0].channel.channel = 2,
+            2 => held.push(held[0].clone()),
+            _ => held.clear(),
+        }
+        assert!(snapshot.encode().is_err(), "forged held case {forged}");
+    }
+}
+
+#[test]
+fn confirm_deferred_off_selection_cannot_escape_current_mapping() {
+    use dmx_protocol::configuration::{NamedEffect, Node, Ticks};
+    let mut c = config();
+    c.content.effects.insert(
+        id(20),
+        NamedEffect {
+            name: "outside".into(),
+            description: "".into(),
+            definition: Node::Fade {
+                lights: "2".into(),
+                ticks: Ticks::Number(1),
+                target: "s(200)".into(),
+                no_dimming: false,
+            },
+        },
+    );
+    rehash(&mut c);
+    let mut i = Installation::initialize(c, BTreeMap::from([(id(2), id(6))])).unwrap();
+    let mut p = request(1);
+    i.desired(&id(2), p.clone(), id(7), None, Instant::now)
+        .unwrap();
+    p.revision = Revision(2);
+    p.off_effect = Some(id(20));
+    assert_eq!(
+        i.desired(&id(2), p.clone(), id(8), None, Instant::now)
+            .unwrap()
+            .execution,
+        id(7)
+    );
+    let before = i.document();
+    p.revision = Revision(3);
+    p.level = Level::OFF;
+    assert!(i.desired(&id(2), p, id(8), None, Instant::now).is_err());
+    assert_eq!(i.document(), before);
+}
