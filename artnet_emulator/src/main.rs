@@ -24,8 +24,22 @@ fn main() {
             opt config_path: Option<String>, desc: "Path to config JSON file", long: "config", short: 'c';
             opt port: u16 = 6454, desc: "ArtNet UDP port", long: "port", short: 'p';
             opt web_port: u16 = 8080, desc: "Port for the web UI", long: "web-port", short: 'w';
+            opt logging_config: Option<String>, desc: "Tracing configuration (including the Logmon destination)", long: "logging-config";
+            opt bind: String = "0.0.0.0".to_string(), desc: "Address for the UDP receiver and web UI", long: "bind";
         }
         .parse_or_exit();
+
+        // Do not inherit the legacy bridge's parent logging.toml or send test
+        // telemetry to its production collector. The emulator has its own config.
+        let mut telemetry = tracing_init::TracingInit::builder("artnet_emulator");
+        telemetry.no_auto_config_file();
+        if let Some(path) = &args.logging_config {
+            telemetry.config_file(path);
+        } else {
+            telemetry.destination("c");
+        }
+        let _telemetry = telemetry.init().expect("Could not initialize emulator telemetry");
+        tracing::info!(logging = %_telemetry, "ArtNet emulator telemetry initialized");
 
         // Load config or start with empty state
         let (emulator_state, config_port, config_web_port) = if let Some(config_path) = &args.config_path {
@@ -33,32 +47,28 @@ fn main() {
                 Ok(json) => match serde_json::from_str::<config::Config>(&json) {
                     Ok(cfg) => {
                         if let Err(e) = cfg.validate() {
-                            eprintln!("Config validation warning: {e} — starting in auto-discovery mode");
+                            tracing::warn!(kind = "config_invalid", path = %config_path, error = %e, "Invalid emulator configuration; using auto-discovery");
                             (state::EmulatorState::empty(), None, None)
                         } else {
                             let ports = (Some(cfg.port), Some(cfg.web_port));
                             let mut state = cfg.to_emulator_state();
                             state.config_path = Some(config_path.clone());
-                            println!(
-                                "Loaded config '{}': {} universes",
-                                config_path,
-                                state.universes.len()
-                            );
+                            tracing::info!(path = %config_path, universes = state.universes.len(), "Emulator configuration loaded");
                             (state, ports.0, ports.1)
                         }
                     }
                     Err(e) => {
-                        eprintln!("Error parsing config '{config_path}': {e} — starting in auto-discovery mode");
+                        tracing::warn!(kind = "config_invalid", path = %config_path, error = %e, "Unreadable emulator configuration; using auto-discovery");
                         (state::EmulatorState::empty(), None, None)
                     }
                 },
                 Err(e) => {
-                    eprintln!("Error reading config '{config_path}': {e} — starting in auto-discovery mode");
+                    tracing::warn!(kind = "external_failure", path = %config_path, error = %e, "Could not read emulator configuration; using auto-discovery");
                     (state::EmulatorState::empty(), None, None)
                 }
             }
         } else {
-            println!("No config file — running in auto-discovery mode");
+            tracing::info!("No emulator configuration; using auto-discovery");
             (state::EmulatorState::empty(), None, None)
         };
 
@@ -70,22 +80,23 @@ fn main() {
         let udp_port = if args.port != 6454 { args.port } else { config_port.unwrap_or(args.port) };
         let web_port = if args.web_port != 8080 { args.web_port } else { config_web_port.unwrap_or(args.web_port) };
 
-        println!("Starting ArtNet Emulator — UDP port: {udp_port}, Web port: {web_port}");
+        tracing::info!(bind = %args.bind, udp_port, web_port, "Starting ArtNet emulator");
 
         if std::env::var("PORT").is_err() {
             unsafe { std::env::set_var("PORT", web_port.to_string()) };
         }
         if std::env::var("IP").is_err() {
-            unsafe { std::env::set_var("IP", "0.0.0.0") };
+            unsafe { std::env::set_var("IP", &args.bind) };
         }
 
         dioxus::serve(move || {
             let shared_state = shared_state.clone();
             let shared_log = shared_log.clone();
             let state_version = state_version.clone();
+            let bind = args.bind.clone();
 
             async move {
-                let bind_addr = format!("0.0.0.0:{udp_port}");
+                let bind_addr = format!("{bind}:{udp_port}");
                 udp::server::start_server(
                     &bind_addr,
                     shared_state.clone(),

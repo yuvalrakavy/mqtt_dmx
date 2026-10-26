@@ -1,0 +1,4 @@
+[workspace]
+members = ["mqtt_dmx", "dmx_protocol"]
+exclude = ["artnet_emulator"]
+resolver = "2"

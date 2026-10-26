@@ -56,33 +56,43 @@ pub async fn session(mqtt_client: AsyncClient, to_mqtt_publisher_rx: Receiver<To
 mod test {
     use super::*;
     use rumqttc::v5::MqttOptions;
-    use tokio::time::{sleep, Duration};
+    use mqtt_test_broker::FakeBroker;
+    use tokio::time::Duration;
 
     #[tokio::test]
     async fn test_mqtt_publisher() {
-        let mut mqtt_options = MqttOptions::new("DMX", "localhost", 1883);
+        let broker = FakeBroker::start().await;
+        let mut mqtt_options = MqttOptions::new("dmx-publisher-test", "127.0.0.1", broker.port());
         mqtt_options.set_keep_alive(Duration::from_secs(5));
         let (mqtt_client, mut event_loop) = AsyncClient::new(mqtt_options, 10);
 
         let (to_mqtt_publisher_tx, to_mqtt_publisher_rx) = async_channel::bounded::<ToMqttPublisherMessage>(10);
 
-        tokio::spawn(async move {
+        let publisher = tokio::spawn(async move {
             let _ = session(mqtt_client, to_mqtt_publisher_rx).await;
+        });
+
+        let pump = tokio::spawn(async move {
+            while event_loop.poll().await.is_ok() {}
         });
 
         to_mqtt_publisher_tx.send(ToMqttPublisherMessage::Error("Test error".to_string())).await.unwrap();
 
-        let timeout = sleep(Duration::from_millis(500));
-        tokio::pin!(timeout);
-
-        loop {
-            tokio::select! {
-                _ = &mut timeout => {
-                    break;
-                }
-                _ = event_loop.poll() => {
-                }
-            }
+        let received = broker.wait_until(Duration::from_secs(2), |b| {
+            !b.received_on("DMX/LastError").is_empty() && !b.received_on("DMX/Error").is_empty()
+        }).await;
+        publisher.abort();
+        pump.abort();
+        let _ = publisher.await;
+        let _ = pump.await;
+        assert!(received, "publisher did not send both error messages to the isolated broker");
+        for (topic, retained) in [("DMX/LastError", true), ("DMX/Error", false)] {
+            let messages = broker.received_on(topic);
+            assert_eq!(messages.len(), 1);
+            assert_eq!(messages[0].retain, retained);
+            let payload: serde_json::Value = serde_json::from_slice(&messages[0].payload).unwrap();
+            assert_eq!(payload["message"], "Test error");
+            assert!(payload["time"].as_str().is_some_and(|time| !time.is_empty()));
         }
     }
 }

@@ -9,7 +9,7 @@ mod test_universe {
     fn get_universe_definition() -> UniverseDefinition {
         UniverseDefinition {
             description: "Test Universe".to_string(),
-            controller: IpAddr::from_str("10.0.1.228").unwrap(),
+            controller: IpAddr::from_str("127.0.0.1").unwrap(),
             net: 0,
             subnet: 0,
             universe: 0,
@@ -21,7 +21,7 @@ mod test_universe {
 
     fn get_universe(universe_id: &str) -> Universe {
         let controller =
-            Arc::new(ArtnetController::new(&IpAddr::from_str("10.0.1.228").unwrap()).unwrap());
+            Arc::new(ArtnetController::new(&IpAddr::from_str("127.0.0.1").unwrap()).unwrap());
         Universe::new(controller, universe_id, get_universe_definition()).unwrap()
     }
 
@@ -155,7 +155,7 @@ mod test_artnet_manager {
     fn get_universe_definition() -> UniverseDefinition {
         UniverseDefinition {
             description: "Test Universe".to_string(),
-            controller: IpAddr::from_str("10.0.1.228").unwrap(),
+            controller: IpAddr::from_str("127.0.0.1").unwrap(),
             net: 0,
             subnet: 0,
             universe: 0,
@@ -282,13 +282,13 @@ mod test_effect_nodes {
     fn get_universe_definition() -> UniverseDefinition {
         UniverseDefinition {
             description: "Test Universe".to_string(),
-            controller: IpAddr::from_str("10.0.1.228").unwrap(),
+            controller: IpAddr::from_str("127.0.0.1").unwrap(),
             net: 0,
             subnet: 0,
             universe: 0,
             channels: 306,
             log: true,
-            disable_send: false,
+            disable_send: true,
         }
     }
 

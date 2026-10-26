@@ -1,0 +1,86 @@
+# Sensitivity controls for explicit fallback durability. Run through Store's
+# scripts/negative-control.py with --root pointing at this checkout and a host
+# CARGO_BUILD_TARGET; the legacy default target is Raspberry Pi.
+
+[[control]]
+name = "fallback_file_sync_is_required"
+guard = "fallback_file_sync"
+file = "mqtt_dmx/src/recovery_file.rs"
+anchor = 'self.io.sync_file(&temporary)'
+replacement = 'Ok::<(), io::Error>(())'
+crate = "mqtt_dmx"
+target = "lib"
+test = "recovery_file::tests::failure_before_replace_preserves_previous_fallback"
+expect_text = 'called `Result::unwrap_err()` on an `Ok` value'
+
+[[control]]
+name = "fallback_directory_sync_is_required_after_replace"
+guard = "fallback_post_replace_directory_sync"
+file = "mqtt_dmx/src/recovery_file.rs"
+anchor = '''self.io.sync_parent(&parent).map_err(|source| Error::Io {
+                stage: "directory_sync",
+                source,
+                uncertain: true,
+            })?;
+            Ok(())'''
+replacement = 'Ok(())'
+crate = "mqtt_dmx"
+target = "lib"
+test = "recovery_file::tests::failed_directory_sync_is_uncertain_and_retry_resyncs"
+expect_text = 'failing.save(id(2)'
+
+[[control]]
+name = "equal_save_id_does_not_skip_durability"
+guard = "fallback_repeat_save_durability"
+file = "mqtt_dmx/src/recovery_file.rs"
+anchor = '''// The previous rename may have succeeded without a confirmed
+                // directory sync. Equality alone is not a durability receipt.
+                self.io.sync_file(&self.path).map_err(|source| Error::Io {
+                    stage: "file_sync",
+                    source,
+                    uncertain: true,
+                })?;
+                self.io.sync_parent(&parent).map_err(|source| Error::Io {
+                    stage: "directory_sync",
+                    source,
+                    uncertain: true,
+                })?;
+                return Ok(());'''
+replacement = 'return Ok(());'
+crate = "mqtt_dmx"
+target = "lib"
+test = "recovery_file::tests::failed_directory_sync_is_uncertain_and_retry_resyncs"
+expect_text = "equal save id cannot bypass failed durability"
+
+[[control]]
+name = "ordered_commit_uses_original_deadline"
+guard = "ordered_array_deadline"
+file = "mqtt_dmx/src/ordered_array.rs"
+anchor = 'deadline.is_some_and(|deadline| now >= deadline)'
+replacement = 'false'
+crate = "mqtt_dmx"
+target = "test:ordering"
+test = "expired_command_and_reused_execution_identity_do_not_commit"
+expect_text = "command(command(2, false)"
+
+[[control]]
+name = "restored_receipt_matches_execution"
+guard = "ordered_array_recovery_receipt"
+file = "mqtt_dmx/src/ordered_array.rs"
+anchor = 'checkpoint.execution != checkpoint.receipt.execution'
+replacement = 'false'
+crate = "mqtt_dmx"
+target = "test:ordering"
+test = "restore_rejects_inconsistent_identity_level_and_operation_receipts"
+expect_text = "OrderedArray::restore(vec![channel()], saved).is_err()"
+
+[[control]]
+name = "older_operation_cannot_undo_stop"
+guard = "operation_high_water"
+file = "dmx_protocol/src/lib.rs"
+anchor = 'candidate.revision < current.revision'
+replacement = 'false'
+crate = "mqtt_dmx"
+target = "test:ordering"
+test = "stop_supersedes_older_desired_and_duplicate_returns_original_receipt"
+expect_text = ".desired(playback(2)"

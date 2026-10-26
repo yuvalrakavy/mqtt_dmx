@@ -1,0 +1,107 @@
+{
+ "rows": {
+  "equal_save_id_does_not_skip_durability": {
+   "last_real": {
+    "at": "2026-10-26T12:43:43Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:49216d727cf47823",
+     "guard": "item:89365dccc856f8cc",
+     "row": "1e38691622b4383e",
+     "test": "test:19133041671a27f7"
+    },
+    "path": "cargo",
+    "secs": 0.9,
+    "sha": "bcc1a7e5e1db59074a22acc041d07c85d1f60fc3",
+    "verdict": "RED"
+   }
+  },
+  "fallback_directory_sync_is_required_after_replace": {
+   "last_real": {
+    "at": "2026-10-26T12:43:42Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:49216d727cf47823",
+     "guard": "item:89365dccc856f8cc",
+     "row": "01e407811e5fb04a",
+     "test": "test:19133041671a27f7"
+    },
+    "path": "cargo",
+    "secs": 0.9,
+    "sha": "bcc1a7e5e1db59074a22acc041d07c85d1f60fc3",
+    "verdict": "RED"
+   }
+  },
+  "fallback_file_sync_is_required": {
+   "last_real": {
+    "at": "2026-10-26T12:43:41Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:49216d727cf47823",
+     "guard": "item:89365dccc856f8cc",
+     "row": "68c93d179beb5110",
+     "test": "test:ab578603dcc8e6a5"
+    },
+    "path": "cargo",
+    "secs": 2.0,
+    "sha": "bcc1a7e5e1db59074a22acc041d07c85d1f60fc3",
+    "verdict": "RED"
+   }
+  },
+  "older_operation_cannot_undo_stop": {
+   "last_real": {
+    "at": "2026-10-26T13:23:05Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:7a8d616b1f49f670",
+     "guard": "item:e0930fd91d02fd62",
+     "row": "f852b872cbd4c698",
+     "test": "test:779842025a2de596"
+    },
+    "path": "cargo",
+    "secs": 1.7,
+    "sha": "bcc1a7e5e1db59074a22acc041d07c85d1f60fc3",
+    "verdict": "RED"
+   }
+  },
+  "ordered_commit_uses_original_deadline": {
+   "last_real": {
+    "at": "2026-10-26T13:23:01Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:ade421e7d6e4a56f",
+     "guard": "item:39fa6d51c43f79de",
+     "row": "6028c751e51659d0",
+     "test": "test:5881d4f820675d82"
+    },
+    "path": "cargo",
+    "secs": 2.7,
+    "sha": "bcc1a7e5e1db59074a22acc041d07c85d1f60fc3",
+    "verdict": "RED"
+   }
+  },
+  "restored_receipt_matches_execution": {
+   "last_real": {
+    "at": "2026-10-26T13:23:24Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:57d5b6ea7027da32",
+     "guard": "item:0541c9338d17b448",
+     "row": "40d6a1d01fe8c431",
+     "test": "test:b71f4089c6a5fbf1"
+    },
+    "path": "cargo",
+    "secs": 2.3,
+    "sha": "bcc1a7e5e1db59074a22acc041d07c85d1f60fc3",
+    "verdict": "RED"
+   }
+  }
+ },
+ "version": 1
+}

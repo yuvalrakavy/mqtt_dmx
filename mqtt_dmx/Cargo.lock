@@ -692,6 +692,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mqtt-test-broker"
+version = "0.1.0"
+source = "git+http://github.com/yuvalrakavy/tracing-init.git?rev=b82de1c2c49fb03d33b304880e5ca197374ac1cc#b82de1c2c49fb03d33b304880e5ca197374ac1cc"
+dependencies = [
+ "bytes",
+ "rumqttc",
+ "tokio",
+]
+
+[[package]]
 name = "mqtt_dmx"
 version = "0.1.0"
 dependencies = [
@@ -701,6 +711,7 @@ dependencies = [
  "chrono",
  "error-stack",
  "log",
+ "mqtt-test-broker",
  "rumqttc",
  "rustop",
  "serde",

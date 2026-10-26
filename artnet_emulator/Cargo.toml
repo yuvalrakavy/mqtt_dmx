@@ -11,8 +11,12 @@ tokio = { version = "1", features = ["full"], optional = true }
 tracing = "0.1"
 rustop = { version = "1", optional = true }
 chrono = { version = "0.4", optional = true }
+tracing-init = { git = "http://github.com/yuvalrakavy/tracing-init.git", rev = "fd39f678ab34243e6af4016115297c7353474993", optional = true }
 
 [features]
 default = ["server", "web"]
-server = ["dioxus/server", "dep:tokio", "dep:rustop", "dep:chrono"]
+server = ["dioxus/server", "dep:tokio", "dep:rustop", "dep:chrono", "dep:tracing-init"]
 web = ["dioxus/web"]
+
+[dev-dependencies]
+tempfile = "3"

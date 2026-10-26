@@ -22,7 +22,7 @@ pub async fn start_server(
         .unwrap_or_else(|e| panic!("Failed to bind UDP socket to {bind_addr}: {e}"));
     let addr = socket.local_addr().unwrap();
 
-    tracing::info!("ArtNet UDP server listening on {addr}");
+    tracing::info!(address = %addr, "ArtNet UDP receiver listening");
 
     tokio::spawn(udp_server_loop(socket, state, log, version_notifier));
 
@@ -41,8 +41,8 @@ async fn udp_server_loop(
         let (len, src) = match socket.recv_from(&mut buf).await {
             Ok(r) => r,
             Err(e) => {
-                tracing::error!("UDP receive error: {e}");
-                continue;
+                tracing::warn!(kind = "external_failure", error = %e, "ArtNet UDP receiver stopped");
+                return;
             }
         };
 
@@ -51,17 +51,27 @@ async fn udp_server_loop(
         match parse_artnet_packet(packet) {
             Ok((key, dmx_data)) => {
                 let channel_count = dmx_data.len();
+                tracing::trace!(target: "detail.artnet_rx", source = %src,
+                    net = key.net, subnet = key.subnet, universe = key.universe,
+                    sequence = packet[12], channels = channel_count, values = ?dmx_data,
+                    "ArtNet frame received");
                 log.push(format!(
                     "From {src}: {} — {channel_count} channels",
                     key,
                 )).await;
 
                 let mut s = state.write().await;
+                if !s.universes.contains_key(&key) {
+                    tracing::info!(source = %src, net = key.net, subnet = key.subnet,
+                        universe = key.universe, channels = channel_count,
+                        "ArtNet universe discovered");
+                }
                 s.update_universe(key, dmx_data);
                 version_notifier.notify(s.version);
             }
             Err(e) => {
-                tracing::warn!("Invalid ArtNet packet from {src}: {e}");
+                tracing::warn!(kind = "protocol_invalid", source = %src, bytes = len,
+                    error = %e, "Invalid ArtNet packet");
             }
         }
     }
