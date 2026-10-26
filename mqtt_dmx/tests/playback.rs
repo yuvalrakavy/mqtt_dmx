@@ -30,6 +30,50 @@ fn player(effect: Effect) -> Player {
 }
 
 #[test]
+fn probe_sequence_consumes_only_one_timed_step_per_tick() {
+    let mut p = player(Effect::Sequence {
+        nodes: vec![fade(0, 100, 1), fade(0, 200, 1)],
+    });
+    p.tick();
+    assert_eq!(
+        p.output(&channel(0)),
+        100,
+        "second timed fade must wait for next tick"
+    );
+    assert_eq!(p.status(), Status::Running);
+    p.tick();
+    assert_eq!(p.output(&channel(0)), 200);
+    assert_eq!(p.status(), Status::Completed);
+}
+
+#[test]
+fn probe_parallel_keeps_longer_sibling_alive_after_last_child_completes() {
+    let mut p = Player::start(
+        [channel(0), channel(1)],
+        Effect::Parallel {
+            nodes: vec![fade(0, 200, 4), fade(1, 100, 1)],
+        },
+        vec![],
+        Level::FULL,
+    )
+    .unwrap();
+    p.tick();
+    assert_eq!(
+        p.status(),
+        Status::Running,
+        "short last child cannot complete its longer sibling"
+    );
+    assert_eq!(p.output(&channel(0)), 50);
+    assert_eq!(p.output(&channel(1)), 100);
+    for _ in 0..3 {
+        p.tick();
+    }
+    assert_eq!(p.status(), Status::Completed);
+    assert_eq!(p.output(&channel(0)), 200);
+    assert_eq!(p.output(&channel(1)), 100);
+}
+
+#[test]
 fn running_restore_restarts_but_completed_restore_preserves_final_output() {
     let mut original = player(fade(0, 200, 4));
     original.tick();

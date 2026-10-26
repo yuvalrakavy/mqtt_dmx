@@ -82,6 +82,40 @@ fn channel() -> Channel {
 }
 
 #[test]
+fn probe_two_arrays_keep_independent_candidates_and_completion() {
+    let mut c = config();
+    let mut second = c.content.arrays[&id(2)].clone();
+    second.name = "two".into();
+    second.generation = id(9);
+    second.lights = BTreeMap::from([("all".into(), "2".into())]);
+    c.content.arrays.insert(id(8), second);
+    c.digest = c.content.digest().unwrap();
+    let mut i =
+        Installation::initialize(c, BTreeMap::from([(id(2), id(6)), (id(8), id(10))])).unwrap();
+    let now = Instant::now();
+    let mut p = request(1);
+    p.generation = id(9);
+    i.desired(&id(8), p, id(11), None, || now)
+        .expect("second array candidate must not replace first array checkpoint");
+    i.tick().unwrap();
+    let mut first = request(1);
+    first.fade_ms = 50;
+    i.desired(&id(2), first, id(7), None, || now).unwrap();
+    assert_eq!(i.receipt(&id(8)).unwrap().execution, id(11));
+    let mut second_channel = channel();
+    second_channel.channel = 2;
+    assert_eq!(i.output(&id(8), &second_channel), 64);
+    i.tick().unwrap();
+    assert_eq!(i.receipt(&id(2)).unwrap().status, Status::Completed);
+    assert_eq!(i.receipt(&id(8)).unwrap().status, Status::Running);
+    assert_eq!(i.output(&id(8), &second_channel), 128);
+    let recovered = Installation::restore(i.document().as_bytes()).unwrap();
+    assert_eq!(recovered.output(&id(2), &channel()), 255);
+    assert_eq!(recovered.receipt(&id(8)).unwrap().execution, id(11));
+    assert_eq!(recovered.receipt(&id(8)).unwrap().status, Status::Running);
+}
+
+#[test]
 fn frames_do_not_publish_but_acceptance_and_completion_each_capture_once() {
     let mut i = installation();
     let now = Instant::now();

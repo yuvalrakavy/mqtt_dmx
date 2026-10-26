@@ -122,6 +122,34 @@ fn expansion_uses_frozen_defaults_then_request_overrides_without_leaking_prior_v
 }
 
 #[test]
+fn probe_global_default_is_used_when_array_and_request_omit_it() {
+    let mut c = config();
+    c.content.values.insert("value".into(), "s(41)".into());
+    c.content.arrays.get_mut(&id(2)).unwrap().effects.insert(
+        id(6),
+        named(Node::Fade {
+            lights: "8".into(),
+            ticks: Ticks::Number(0),
+            target: "`value`".into(),
+            no_dimming: false,
+        }),
+    );
+    rehash(&mut c);
+    let compiled = CompiledConfiguration::compile(c).unwrap();
+    let owned = compiled.ownership()[&id(2)].clone();
+    let effect = compiled
+        .effect(&id(2), Some(&id(6)), &BTreeMap::new(), false, 0)
+        .expect("global default must resolve the required value");
+    let ch = owned.iter().find(|c| c.channel == 8).unwrap();
+    assert_eq!(
+        Player::start(owned.clone(), effect, vec![], Level::FULL)
+            .unwrap()
+            .output(ch),
+        41
+    );
+}
+
+#[test]
 fn parameterized_raw_and_nested_effects_cannot_escape_published_all() {
     let mut c = config();
     c.content.arrays.get_mut(&id(2)).unwrap().effects.insert(

@@ -51,6 +51,89 @@ fn playback(revision: u64) -> Playback {
 fn array() -> OrderedArray {
     OrderedArray::new(vec![channel()], playback(1), effect(200), id(5)).unwrap()
 }
+
+#[test]
+fn probe_parameter_only_change_restarts_from_current_planes() {
+    let now = Instant::now();
+    for state in [Status::Running, Status::Completed, Status::Stopped] {
+        let mut a = array();
+        a.tick();
+        if state == Status::Completed {
+            for _ in 0..3 {
+                a.tick();
+            }
+        } else if state == Status::Stopped {
+            a.command(command(2, false), id(6), None, now).unwrap();
+        }
+        assert_eq!(a.receipt().status, state);
+        let before = a.output(&channel());
+        let mut request = playback(3);
+        request.parameters.insert("color".into(), "blue".into());
+        let receipt = a.desired(request, effect(250), id(8), None, now).unwrap();
+        assert_eq!(
+            receipt.execution,
+            id(8),
+            "parameter-only change must start new execution from {state:?}"
+        );
+        assert_eq!(receipt.status, Status::Running);
+        assert_eq!(a.output(&channel()), before);
+        a.tick();
+        assert_eq!(
+            a.output(&channel()),
+            if state == Status::Completed { 213 } else { 100 }
+        );
+    }
+}
+
+#[test]
+fn probe_brightness_change_preserves_completed_and_stopped_lifetimes() {
+    let now = Instant::now();
+    for state in [Status::Completed, Status::Stopped] {
+        let mut a = array();
+        a.tick();
+        if state == Status::Completed {
+            for _ in 0..3 {
+                a.tick();
+            }
+        } else {
+            a.command(command(2, false), id(6), None, now).unwrap();
+        }
+        let before = a.output(&channel());
+        let mut request = playback(3);
+        request.level = Level::try_from(500).unwrap();
+        let receipt = a.desired(request, effect(255), id(8), None, now).unwrap();
+        assert_eq!(receipt.execution, id(5));
+        assert_eq!(receipt.status, state);
+        for _ in 0..5 {
+            a.tick();
+        }
+        assert_eq!(a.receipt().status, state);
+        assert_eq!(a.output(&channel()), before / 2);
+    }
+}
+
+#[test]
+fn probe_restart_preserves_nonzero_original_start() {
+    let now = Instant::now();
+    let mut a = array();
+    a.tick();
+    let mut selected = playback(2);
+    selected.effect = Some(id(9));
+    a.desired(selected, effect(250), id(8), None, now).unwrap();
+    a.tick();
+    assert_eq!(a.output(&channel()), 100);
+    let mut restart = command(3, true);
+    restart.expected_playback = Revision(2);
+    restart.expected_execution = id(8);
+    a.command(restart, id(9), None, now).unwrap();
+    assert_eq!(
+        a.output(&channel()),
+        50,
+        "restart must retain the execution's nonzero original start"
+    );
+    a.tick();
+    assert_eq!(a.output(&channel()), 100);
+}
 fn command(revision: u64, restart: bool) -> Command {
     Command {
         revision: Revision(revision),

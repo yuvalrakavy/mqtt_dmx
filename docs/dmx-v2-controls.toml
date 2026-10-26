@@ -243,3 +243,69 @@ crate = "mqtt_dmx"
 target = "lib"
 test = "fallback_worker::tests::dropping_the_ticket_cancels_before_an_abandoned_job_can_report_success"
 expect_text = "cancelled.load(Ordering::Acquire)"
+
+[[control]]
+name = "parameter_only_change_starts_a_new_execution"
+guard = "execution_parameter_change"
+file = "mqtt_dmx/src/ordered_array.rs"
+anchor = 'request.parameters != self.playback.parameters'
+replacement = 'false'
+crate = "mqtt_dmx"
+target = "test:ordering"
+test = "probe_parameter_only_change_restarts_from_current_planes"
+expect_text = "parameter-only change must start new execution"
+
+[[control]]
+name = "restart_preserves_nonzero_original_planes"
+guard = "restart_original_planes"
+file = "mqtt_dmx/src/ordered_array.rs"
+anchor = 'snapshot.initial,'
+replacement = 'vec![],'
+crate = "mqtt_dmx"
+target = "test:ordering"
+test = "probe_restart_preserves_nonzero_original_start"
+expect_text = "restart must retain the execution's nonzero original start"
+
+[[control]]
+name = "sequence_consumes_at_most_one_timed_step_per_tick"
+guard = "sequence_tick_consumption"
+file = "mqtt_dmx/src/engine.rs"
+anchor = 'allow_tick && !consumed'
+replacement = 'allow_tick'
+crate = "mqtt_dmx"
+target = "test:playback"
+test = "probe_sequence_consumes_only_one_timed_step_per_tick"
+expect_text = "second timed fade must wait for next tick"
+
+[[control]]
+name = "global_defaults_work_without_an_array_override"
+guard = "global_parameter_defaults"
+file = "mqtt_dmx/src/compiler.rs"
+anchor = 'let mut values = content.values.clone();'
+replacement = 'let mut values = BTreeMap::new();'
+crate = "mqtt_dmx"
+target = "test:compiler"
+test = "probe_global_default_is_used_when_array_and_request_omit_it"
+expect_text = "global default must resolve the required value"
+
+[[control]]
+name = "parallel_completion_waits_for_every_child"
+guard = "parallel_completion_aggregation"
+file = "mqtt_dmx/src/engine.rs"
+anchor = 'done &= step.done;'
+replacement = 'done = step.done;'
+crate = "mqtt_dmx"
+target = "test:playback"
+test = "probe_parallel_keeps_longer_sibling_alive_after_last_child_completes"
+expect_text = "short last child cannot complete its longer sibling"
+
+[[control]]
+name = "installation_candidate_changes_only_its_own_array"
+guard = "installation_candidate_target"
+file = "mqtt_dmx/src/installation.rs"
+anchor = '.filter(|(target, _)| *target == id)'
+replacement = ''
+crate = "mqtt_dmx"
+target = "test:installation"
+test = "probe_two_arrays_keep_independent_candidates_and_completion"
+expect_text = "second array candidate must not replace first array checkpoint"
