@@ -22,6 +22,8 @@ pub enum Error {
     },
     #[error("fallback save id already belongs to a different document")]
     Conflict,
+    #[error("fallback save cancelled or expired; replacement uncertain: {uncertain}")]
+    Interrupted { uncertain: bool },
     #[error("invalid fallback: {0}")]
     Corrupt(&'static str),
 }
@@ -85,6 +87,17 @@ impl FallbackFile {
     /// Called only by the owning service's explicit SaveStartupFallback operation.
     /// The owner serializes saves; this helper does not arbitrate multiple processes.
     pub fn save(&mut self, save_id: Id, snapshot: &str) -> Result<(), Error> {
+        self.save_checked(save_id, snapshot, &|| true)
+    }
+    /// Cancellation is cooperative between filesystem calls. Once replacement
+    /// happened, finish directory synchronization even if the caller disappeared.
+    pub fn save_checked(
+        &mut self,
+        save_id: Id,
+        snapshot: &str,
+        allowed: &dyn Fn() -> bool,
+    ) -> Result<(), Error> {
+        check_save(allowed, false)?;
         let canonical = canonicalize_json(snapshot.as_bytes(), MAX_RECOVERY_BYTES)?;
         if !canonical.starts_with('{') || canonical != snapshot {
             return Err(Error::Corrupt("snapshot must be a canonical JSON object"));
@@ -100,6 +113,7 @@ impl FallbackFile {
                 if saved.snapshot != snapshot {
                     return Err(Error::Conflict);
                 }
+                check_save(allowed, false)?;
                 // The previous rename may have succeeded without a confirmed
                 // directory sync. Equality alone is not a durability receipt.
                 self.io.sync_file(&self.path).map_err(|source| Error::Io {
@@ -112,7 +126,7 @@ impl FallbackFile {
                     source,
                     uncertain: true,
                 })?;
-                return Ok(());
+                return check_save(allowed, true);
             }
         }
         let name = self
@@ -133,6 +147,7 @@ impl FallbackFile {
         if bytes.len() > MAX_FILE_BYTES {
             return Err(Error::Corrupt("fallback envelope exceeds size limit"));
         }
+        check_save(allowed, false)?;
         self.io
             .prepare(&parent, &temporary)
             .map_err(|source| Error::Io {
@@ -141,6 +156,7 @@ impl FallbackFile {
                 uncertain: false,
             })?;
         let result = (|| {
+            check_save(allowed, false)?;
             self.io
                 .write(&temporary, &bytes)
                 .map_err(|source| Error::Io {
@@ -153,6 +169,7 @@ impl FallbackFile {
                 source,
                 uncertain: false,
             })?;
+            check_save(allowed, false)?;
             self.io
                 .replace(&temporary, &self.path)
                 .map_err(|source| Error::Io {
@@ -165,13 +182,20 @@ impl FallbackFile {
                 source,
                 uncertain: true,
             })?;
-            Ok(())
+            check_save(allowed, true)
         })();
         if result.is_err() {
             self.io.cleanup(&temporary);
         }
         result
     }
+}
+
+fn check_save(allowed: &dyn Fn() -> bool, uncertain: bool) -> Result<(), Error> {
+    if !allowed() {
+        return Err(Error::Interrupted { uncertain });
+    }
+    Ok(())
 }
 
 trait Backend: Send {
@@ -395,5 +419,52 @@ mod tests {
         let mut normal = FallbackFile::new(path);
         normal.save(id(2), "{\"level\":500}").unwrap();
         assert_eq!(normal.load().unwrap().unwrap().snapshot, "{\"level\":500}");
+    }
+
+    #[test]
+    fn cancellation_before_replacement_preserves_the_previous_snapshot() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("fallback.json");
+        let mut file = FallbackFile::new(path.clone());
+        file.save(id(1), "{\"level\":300}").unwrap();
+        assert!(matches!(
+            file.save_checked(id(2), "{\"level\":500}", &|| false),
+            Err(Error::Interrupted { uncertain: false })
+        ));
+        let calls = std::cell::Cell::new(0);
+        let allowed = || {
+            let call = calls.get();
+            calls.set(call + 1);
+            call < 3
+        };
+        assert!(matches!(
+            file.save_checked(id(2), "{\"level\":500}", &allowed),
+            Err(Error::Interrupted { uncertain: false })
+        ));
+        assert_eq!(file.load().unwrap().unwrap().save_id, id(1));
+        assert_eq!(
+            fs::read_dir(root.path()).unwrap().count(),
+            1,
+            "cancelled temporary file is removed"
+        );
+    }
+
+    #[test]
+    fn cancellation_after_replacement_finishes_sync_but_reports_uncertainty() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("fallback.json");
+        let mut file = FallbackFile::new(path);
+        let calls = std::cell::Cell::new(0);
+        let allowed = || {
+            let call = calls.get();
+            calls.set(call + 1);
+            call < 4
+        };
+        assert!(matches!(
+            file.save_checked(id(2), "{\"level\":500}", &allowed),
+            Err(Error::Interrupted { uncertain: true })
+        ));
+        assert_eq!(file.load().unwrap().unwrap().save_id, id(2));
+        file.save(id(2), "{\"level\":500}").unwrap();
     }
 }

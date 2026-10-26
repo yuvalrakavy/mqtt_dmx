@@ -68,37 +68,88 @@
     "verdict": "RED"
    }
   },
-  "equal_save_id_does_not_skip_durability": {
+  "dropping_save_ticket_cancels_the_job": {
    "last_real": {
-    "at": "2026-10-26T12:43:43Z",
+    "at": "2026-10-26T15:39:59Z",
     "dirty": true,
     "expected": "RED",
     "fingerprints": {
-     "files": "files:49216d727cf47823",
-     "guard": "item:89365dccc856f8cc",
-     "row": "1e38691622b4383e",
+     "files": "files:b91b79fb10d17086",
+     "guard": "item:8aa7669346af0563",
+     "row": "282e256f455474eb",
+     "test": "test:5c2e98bbe63cf121"
+    },
+    "path": "cargo",
+    "secs": 1.3,
+    "sha": "1fd5dd831c2b87f0bff219809bc68d6516d5442a",
+    "verdict": "RED"
+   }
+  },
+  "equal_save_id_does_not_skip_durability": {
+   "last_real": {
+    "at": "2026-10-26T15:39:53Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:261f0bcac95025e0",
+     "guard": "item:aee1acf41010f6f6",
+     "row": "4e2ec08daba5c4a6",
      "test": "test:19133041671a27f7"
     },
     "path": "cargo",
-    "secs": 0.9,
-    "sha": "bcc1a7e5e1db59074a22acc041d07c85d1f60fc3",
+    "secs": 1.4,
+    "sha": "1fd5dd831c2b87f0bff219809bc68d6516d5442a",
+    "verdict": "RED"
+   }
+  },
+  "fallback_cancel_after_replace_never_reports_success": {
+   "last_real": {
+    "at": "2026-10-26T15:39:56Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:261f0bcac95025e0",
+     "guard": "item:aee1acf41010f6f6",
+     "row": "191cc4f5d1925c52",
+     "test": "test:e2cd003d89582e56"
+    },
+    "path": "cargo",
+    "secs": 1.4,
+    "sha": "1fd5dd831c2b87f0bff219809bc68d6516d5442a",
+    "verdict": "RED"
+   }
+  },
+  "fallback_cancel_is_checked_before_replace": {
+   "last_real": {
+    "at": "2026-10-26T15:39:55Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:261f0bcac95025e0",
+     "guard": "item:aee1acf41010f6f6",
+     "row": "80d8be5e20d1846b",
+     "test": "test:9904c36a2bb327c8"
+    },
+    "path": "cargo",
+    "secs": 1.4,
+    "sha": "1fd5dd831c2b87f0bff219809bc68d6516d5442a",
     "verdict": "RED"
    }
   },
   "fallback_directory_sync_is_required_after_replace": {
    "last_real": {
-    "at": "2026-10-26T12:43:42Z",
+    "at": "2026-10-26T15:39:52Z",
     "dirty": true,
     "expected": "RED",
     "fingerprints": {
-     "files": "files:49216d727cf47823",
-     "guard": "item:89365dccc856f8cc",
-     "row": "01e407811e5fb04a",
+     "files": "files:261f0bcac95025e0",
+     "guard": "item:aee1acf41010f6f6",
+     "row": "d8773c98fb6b6c46",
      "test": "test:19133041671a27f7"
     },
     "path": "cargo",
-    "secs": 0.9,
-    "sha": "bcc1a7e5e1db59074a22acc041d07c85d1f60fc3",
+    "secs": 2.1,
+    "sha": "1fd5dd831c2b87f0bff219809bc68d6516d5442a",
     "verdict": "RED"
    }
   },
@@ -116,6 +167,23 @@
     "path": "cargo",
     "secs": 2.0,
     "sha": "bcc1a7e5e1db59074a22acc041d07c85d1f60fc3",
+    "verdict": "RED"
+   }
+  },
+  "fallback_worker_allows_only_one_in_flight_save": {
+   "last_real": {
+    "at": "2026-10-26T15:39:57Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:b91b79fb10d17086",
+     "guard": "item:3ad31805b3d0b17a",
+     "row": "c1c56c3ea41242e8",
+     "test": "test:9bf3eb5a3bb3baab"
+    },
+    "path": "cargo",
+    "secs": 1.3,
+    "sha": "1fd5dd831c2b87f0bff219809bc68d6516d5442a",
     "verdict": "RED"
    }
   },

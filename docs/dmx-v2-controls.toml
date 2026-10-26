@@ -22,8 +22,8 @@ anchor = '''self.io.sync_parent(&parent).map_err(|source| Error::Io {
                 source,
                 uncertain: true,
             })?;
-            Ok(())'''
-replacement = 'Ok(())'
+            check_save(allowed, true)'''
+replacement = 'check_save(allowed, true)'
 crate = "mqtt_dmx"
 target = "lib"
 test = "recovery_file::tests::failed_directory_sync_is_uncertain_and_retry_resyncs"
@@ -45,8 +45,8 @@ anchor = '''// The previous rename may have succeeded without a confirmed
                     source,
                     uncertain: true,
                 })?;
-                return Ok(());'''
-replacement = 'return Ok(());'
+                return check_save(allowed, true);'''
+replacement = 'return check_save(allowed, true);'
 crate = "mqtt_dmx"
 target = "lib"
 test = "recovery_file::tests::failed_directory_sync_is_uncertain_and_retry_resyncs"
@@ -194,3 +194,52 @@ crate = "mqtt_dmx"
 target = "test:installation"
 test = "generation_rotates_exactly_when_physical_ownership_changes"
 expect_text = "generation_rotates_exactly_when_physical_ownership_changes"
+
+[[control]]
+name = "fallback_cancel_is_checked_before_replace"
+guard = "fallback_pre_replace_cancel"
+file = "mqtt_dmx/src/recovery_file.rs"
+anchor = '''check_save(allowed, false)?;
+            self.io
+                .replace'''
+replacement = '''self.io
+                .replace'''
+crate = "mqtt_dmx"
+target = "lib"
+test = "recovery_file::tests::cancellation_before_replacement_preserves_the_previous_snapshot"
+expect_text = "cancellation_before_replacement_preserves_the_previous_snapshot"
+
+[[control]]
+name = "fallback_cancel_after_replace_never_reports_success"
+guard = "fallback_post_replace_cancel"
+file = "mqtt_dmx/src/recovery_file.rs"
+anchor = '''check_save(allowed, true)
+        })();'''
+replacement = '''Ok(())
+        })();'''
+crate = "mqtt_dmx"
+target = "lib"
+test = "recovery_file::tests::cancellation_after_replacement_finishes_sync_but_reports_uncertainty"
+expect_text = "cancellation_after_replacement_finishes_sync_but_reports_uncertainty"
+
+[[control]]
+name = "fallback_worker_allows_only_one_in_flight_save"
+guard = "fallback_single_save_slot"
+file = "mqtt_dmx/src/fallback_worker.rs"
+anchor = 'Semaphore::new(1)'
+replacement = 'Semaphore::new(2)'
+crate = "mqtt_dmx"
+target = "lib"
+test = "fallback_worker::tests::cancellation_keeps_one_busy_slot_until_blocking_work_actually_ends"
+expect_text = "worker.busy()"
+
+[[control]]
+name = "dropping_save_ticket_cancels_the_job"
+guard = "fallback_ticket_drop_cancel"
+file = "mqtt_dmx/src/fallback_worker.rs"
+anchor = 'self.cancel();'
+replacement = ''
+crate = "mqtt_dmx"
+target = "lib"
+test = "fallback_worker::tests::dropping_the_ticket_cancels_before_an_abandoned_job_can_report_success"
+expect_text = "cancelled.load(Ordering::Acquire)"
