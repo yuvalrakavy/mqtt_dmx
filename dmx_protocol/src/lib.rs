@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
+pub mod configuration;
 mod strict_json;
 
 pub const MAX_PLAYBACK_BYTES: usize = 16 * 1024;

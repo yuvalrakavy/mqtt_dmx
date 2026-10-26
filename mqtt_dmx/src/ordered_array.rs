@@ -197,12 +197,18 @@ impl OrderedArray {
         Ok(self.commit(stamp))
     }
     pub fn checkpoint(&self) -> Result<Checkpoint, Error> {
+        let mut player = self.player.snapshot();
+        if player.status == Status::Running {
+            // Running recovery restarts from initial planes. Keeping frame output
+            // here would change the document without a transition/revision.
+            player.held = player.initial.clone();
+        }
         Ok(Checkpoint {
             playback: self.playback.encode()?,
             execution: self.execution.clone(),
             last_operation: self.last_operation.clone(),
             receipt: self.last_receipt.clone(),
-            player: self.player.snapshot(),
+            player,
         })
     }
     pub fn restore(owned: Vec<Channel>, checkpoint: Checkpoint) -> Result<Self, Error> {
@@ -251,8 +257,9 @@ impl OrderedArray {
             }
         };
         let status = checkpoint.player.status;
+        let expected_player = checkpoint.player.clone();
         let player = Player::restore(owned.clone(), checkpoint.player)?;
-        if player.status() != status {
+        if player.status() != status || player.snapshot() != expected_player {
             return Err(invalid());
         }
         Ok(Self {

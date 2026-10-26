@@ -1,5 +1,39 @@
 {
  "rows": {
+  "arrays_have_exclusive_physical_ownership": {
+   "last_real": {
+    "at": "2026-10-26T13:34:01Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:819e05d1f5354347",
+     "guard": "item:eae95fc81a9c0fd8",
+     "row": "f5ab8da891b4aaa4",
+     "test": "test:addd2631c7047fba"
+    },
+    "path": "cargo",
+    "secs": 1.9,
+    "sha": "7f5814d60a892ec01268f3dbb33f0801ee2c92f7",
+    "verdict": "RED"
+   }
+  },
+  "configuration_content_digest_is_checked": {
+   "last_real": {
+    "at": "2026-10-26T13:33:59Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:46ee6b8f2ec1e812",
+     "guard": "item:85c2f942cff7a316",
+     "row": "7575715ee77e1b13",
+     "test": "test:25d004e54ecc3289"
+    },
+    "path": "cargo",
+    "secs": 2.9,
+    "sha": "7f5814d60a892ec01268f3dbb33f0801ee2c92f7",
+    "verdict": "RED"
+   }
+  },
   "equal_save_id_does_not_skip_durability": {
    "last_real": {
     "at": "2026-10-26T12:43:43Z",
@@ -85,6 +119,40 @@
     "verdict": "RED"
    }
   },
+  "recovery_schema_is_checked": {
+   "last_real": {
+    "at": "2026-10-26T13:34:04Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:a29537ee7b5654f0",
+     "guard": "item:3b0ba139304378a8",
+     "row": "0591aa9a868a6b6b",
+     "test": "test:1129eee0038dee2a"
+    },
+    "path": "cargo",
+    "secs": 1.9,
+    "sha": "7f5814d60a892ec01268f3dbb33f0801ee2c92f7",
+    "verdict": "RED"
+   }
+  },
+  "resolved_effect_stays_inside_fixed_ownership": {
+   "last_real": {
+    "at": "2026-10-26T13:34:03Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:b8a48eabad9a31a5",
+     "guard": "item:9b39f785465f79c9",
+     "row": "6ce112b1e064936a",
+     "test": "test:8d4fb6c99f5a44f5"
+    },
+    "path": "cargo",
+    "secs": 1.9,
+    "sha": "7f5814d60a892ec01268f3dbb33f0801ee2c92f7",
+    "verdict": "RED"
+   }
+  },
   "restored_receipt_matches_execution": {
    "last_real": {
     "at": "2026-10-26T13:23:24Z",
@@ -99,6 +167,23 @@
     "path": "cargo",
     "secs": 2.3,
     "sha": "bcc1a7e5e1db59074a22acc041d07c85d1f60fc3",
+    "verdict": "RED"
+   }
+  },
+  "retired_id_cannot_reappear_in_recovery": {
+   "last_real": {
+    "at": "2026-10-26T13:34:07Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:a29537ee7b5654f0",
+     "guard": "item:3b0ba139304378a8",
+     "row": "237c86e2867fa587",
+     "test": "test:4e4cacc9d7043d01"
+    },
+    "path": "cargo",
+    "secs": 2.1,
+    "sha": "7f5814d60a892ec01268f3dbb33f0801ee2c92f7",
     "verdict": "RED"
    }
   }

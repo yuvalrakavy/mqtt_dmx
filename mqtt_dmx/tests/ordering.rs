@@ -291,3 +291,20 @@ fn expired_command_and_reused_execution_identity_do_not_commit() {
     assert_eq!(a.output(&channel()), 50);
     a.command(command(2, false), id(6), None, now).unwrap();
 }
+
+#[test]
+fn running_checkpoint_is_stable_between_transitions_but_stop_captures_current_planes() {
+    let now = Instant::now();
+    let mut a = array();
+    let before = serde_json::to_string(&a.checkpoint().unwrap()).unwrap();
+    a.tick();
+    a.tick();
+    assert_eq!(
+        serde_json::to_string(&a.checkpoint().unwrap()).unwrap(),
+        before,
+        "frames cannot change a retained snapshot at the same revision"
+    );
+    a.command(command(2, false), id(6), None, now).unwrap();
+    let checkpoint = a.checkpoint().unwrap();
+    assert_eq!(checkpoint.player.held[0].planes.dimmable, 100);
+}

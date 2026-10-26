@@ -17,7 +17,7 @@ pub struct Channel {
 }
 
 impl Channel {
-    fn canonical(mut self) -> Self {
+    pub(crate) fn canonical(mut self) -> Self {
         if let IpAddr::V6(address) = self.endpoint.ip() {
             if let Some(address) = address.to_ipv4_mapped() {
                 self.endpoint = SocketAddr::new(address.into(), self.endpoint.port());
