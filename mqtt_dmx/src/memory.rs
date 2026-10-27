@@ -124,6 +124,37 @@ mod tests {
     use crate::engine::{Channel, Target};
 
     #[test]
+    fn large_ownership_is_charged_even_for_a_delay() {
+        use crate::engine::Player;
+        let channels: Vec<_> = (0..1200)
+            .map(|n| Channel {
+                endpoint: "127.0.0.1:6454".parse().unwrap(),
+                net: 0,
+                subnet: 0,
+                universe: (n / 512) as u8,
+                channel: (n % 512) as u16,
+            })
+            .collect();
+        assert!(
+            matches!(Player::start(channels, Effect::Delay { ticks: 1 }, vec![], dmx_protocol::Level::FULL),
+            Err(ref error) if error.to_string().contains("16MiB")),
+            "large ownership bypassed player admission for a small plan"
+        );
+    }
+
+    #[test]
+    fn sparse_authored_node_capacity_is_reserved() {
+        use crate::engine::Player;
+        let mut nodes = Vec::with_capacity(10_000);
+        nodes.push(Effect::Delay { ticks: 1 });
+        assert!(
+            matches!(Player::start(Vec::<Channel>::new(), Effect::Sequence { nodes }, vec![], dmx_protocol::Level::FULL),
+            Err(ref error) if error.to_string().contains("16MiB")),
+            "sparse authored node capacity bypassed player admission"
+        );
+    }
+
+    #[test]
     fn reservations_cover_simultaneous_slots_recovery_and_future_fade_maps() {
         assert_eq!(
             ENGINE_SLOTS, 11,

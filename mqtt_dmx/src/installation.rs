@@ -105,6 +105,14 @@ impl Installation {
     pub fn configuration(&self) -> &Configuration {
         self.configuration.configuration()
     }
+    /// Fixed physical ownership used by the output adapter; never resolve labels
+    /// or acquire new channels while rendering a frame.
+    pub fn channels(&self) -> impl Iterator<Item = (&Id, &Channel)> {
+        self.configuration
+            .ownership()
+            .iter()
+            .flat_map(|(array, channels)| channels.iter().map(move |channel| (array, channel)))
+    }
     pub fn configure(
         &mut self,
         configuration: Configuration,

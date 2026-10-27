@@ -1,0 +1,102 @@
+[[control]]
+name = "artnet_subnet_and_universe_are_swapped"
+guard = "physical universe bytes"
+file = "mqtt_dmx/src/output.rs"
+anchor = '(address.subnet << 4) | address.universe'
+replacement = '(address.universe << 4) | address.subnet'
+crate = "mqtt_dmx"
+target = "test:output"
+test = "output_uses_engine_values_and_the_exact_universe_address_on_each_packet"
+expect_text = "output swapped net/subnet/universe addressing"
+
+[[control]]
+name = "activation_resets_existing_universe_sequences"
+guard = "activation preserves live sequence"
+file = "mqtt_dmx/src/output.rs"
+anchor = 'frame.sequence = old.sequence;'
+replacement = 'frame.sequence = 0;'
+crate = "mqtt_dmx"
+target = "test:output"
+test = "configuration_changes_preserve_sequences_for_unchanged_physical_universes"
+expect_text = "configuration activation restarted a live universe sequence"
+
+[[control]]
+name = "activation_drops_old_mapping_clear_frames"
+guard = "activation clears old physical addresses"
+file = "mqtt_dmx/src/output.rs"
+anchor = 'let clearing = previous.clear_released(released)?;'
+replacement = 'let clearing = Vec::new();'
+crate = "mqtt_dmx"
+target = "test:output"
+test = "reconfiguration_returns_old_mapping_clear_frames_before_new_mapping_frames"
+expect_text = 'assertion `left == right` failed'
+
+[[control]]
+name = "sequence_wrap_disables_packet_ordering"
+guard = "nonzero sequence wrapping"
+file = "mqtt_dmx/src/output.rs"
+anchor = '''if self.sequence == 255 {
+            1
+        } else {'''
+replacement = '''if self.sequence == 255 {
+            0
+        } else {'''
+crate = "mqtt_dmx"
+target = "test:output"
+test = "every_tick_has_a_nonzero_sequence_and_wrapping_does_not_disable_ordering"
+expect_text = "sequence wrapped through disabled value zero"
+
+[[control]]
+name = "released_frame_erases_unrelated_channels"
+guard = "selective released-channel clearing"
+file = "mqtt_dmx/src/output.rs"
+anchor = '*output = 0;'
+replacement = 'frame.levels.fill(0);'
+crate = "mqtt_dmx"
+target = "test:output"
+test = "released_output_is_cleared_without_erasing_other_channels"
+expect_text = "clearing released ownership erased an unrelated channel"
+
+[[control]]
+name = "failed_release_commits_a_partial_frame"
+guard = "atomic release preparation"
+file = "mqtt_dmx/src/output.rs"
+anchor = 'affected.insert(address);'
+replacement = 'affected.insert(address); self.universes = candidate.clone();'
+crate = "mqtt_dmx"
+target = "test:output"
+test = "invalid_release_does_not_partially_clear_previous_output"
+expect_text = "invalid release partially cleared the old output"
+
+[[control]]
+name = "output_ignores_added_unused_universes"
+guard = "complete physical universe set"
+file = "mqtt_dmx/src/output.rs"
+anchor = 'if expected != self.universes.keys().cloned().collect() {'
+replacement = 'if false {'
+crate = "mqtt_dmx"
+target = "test:output"
+test = "a_configuration_mismatch_preserves_the_previous_frame_set"
+expect_text = "changed universe mapping was rendered without activation"
+
+[[control]]
+name = "mapped_ipv4_output_does_not_share_the_compiler_canonical_form"
+guard = "canonical physical destination"
+file = "mqtt_dmx/src/output.rs"
+anchor = 'let channel = channel.clone().canonical();'
+replacement = 'let channel = channel.clone();'
+crate = "mqtt_dmx"
+target = "test:output"
+test = "output_normalizes_ipv4_mapped_endpoints_like_the_ownership_compiler"
+expect_text = 'owned output channel has no configured universe'
+
+[[control]]
+name = "sender_drops_the_actual_packet_payload"
+guard = "actual UDP datagram delivery"
+file = "mqtt_dmx/src/output.rs"
+anchor = '.send_to(&datagram.bytes, datagram.destination)?'
+replacement = '.send_to(&datagram.bytes[..18], datagram.destination)?'
+crate = "mqtt_dmx"
+target = "test:output"
+test = "nonblocking_sender_delivers_an_actual_frame_to_an_owned_loopback_receiver"
+expect_text = 'incomplete Art-Net datagram'

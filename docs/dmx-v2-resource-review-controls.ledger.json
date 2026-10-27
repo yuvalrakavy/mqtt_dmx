@@ -1,0 +1,39 @@
+{
+ "rows": {
+  "owned_planes_not_charged_for_small_effects": {
+   "last_real": {
+    "at": "2026-10-27T10:03:53Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:228170007d525898",
+     "guard": "item:2c7b444f5acf78ec",
+     "row": "a3a35e4298573699",
+     "test": "test:ff721ab0bd3b9799"
+    },
+    "path": "cargo",
+    "secs": 1.8,
+    "sha": "53ae4a9b5664ba59b2d9947869eeee8b020e2564",
+    "verdict": "RED"
+   }
+  },
+  "spare_authored_node_capacity_not_charged": {
+   "last_real": {
+    "at": "2026-10-27T10:03:55Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:228170007d525898",
+     "guard": "item:acd69d53cf1300c9",
+     "row": "ff7ebdd70bd65e97",
+     "test": "test:d8990d3bd1b95b08"
+    },
+    "path": "cargo",
+    "secs": 1.9,
+    "sha": "53ae4a9b5664ba59b2d9947869eeee8b020e2564",
+    "verdict": "RED"
+   }
+  }
+ },
+ "version": 1
+}

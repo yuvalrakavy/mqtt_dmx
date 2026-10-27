@@ -1,0 +1,21 @@
+[[control]]
+name = "owned_planes_not_charged_for_small_effects"
+guard = "owned-channel plane storage"
+file = "mqtt_dmx/src/memory.rs"
+anchor = 'owned.saturating_mul(1024)'
+replacement = 'owned.saturating_mul(0)'
+crate = "mqtt_dmx"
+target = "lib"
+test = "memory::tests::large_ownership_is_charged_even_for_a_delay"
+expect_text = "large ownership bypassed player admission for a small plan"
+
+[[control]]
+name = "spare_authored_node_capacity_not_charged"
+guard = "authored node vector capacity"
+file = "mqtt_dmx/src/memory.rs"
+anchor = 'nodes.capacity().saturating_mul(128)'
+replacement = 'nodes.len().saturating_mul(128)'
+crate = "mqtt_dmx"
+target = "lib"
+test = "memory::tests::sparse_authored_node_capacity_is_reserved"
+expect_text = "sparse authored node capacity bypassed player admission"
