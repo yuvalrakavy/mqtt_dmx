@@ -53,18 +53,18 @@
   },
   "completion_encoding_headroom_is_reserved": {
    "last_real": {
-    "at": "2026-10-26T15:29:00Z",
+    "at": "2026-10-27T00:26:52Z",
     "dirty": true,
     "expected": "RED",
     "fingerprints": {
-     "files": "files:c5a05fb72bd2d58a",
-     "guard": "item:22d6d6499d46caff",
-     "row": "57c8b642d54a2ec1",
-     "test": "test:da0e2077bdb24efc"
+     "files": "files:08dcf5113645eea6",
+     "guard": "item:0bd4d8b45674a1c5",
+     "row": "8ef8602918001c84",
+     "test": "test:0077b6e10a79a824"
     },
     "path": "cargo",
-    "secs": 3.2,
-    "sha": "3dd12c5024471fa09ae665191c02a5b99c4ebe6b",
+    "secs": 3.8,
+    "sha": "96207a660496a3fcb0f90de64cc22fbeace54c41",
     "verdict": "RED"
    }
   },

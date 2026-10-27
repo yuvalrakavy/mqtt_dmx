@@ -1,0 +1,124 @@
+{
+ "rows": {
+  "aggregate_snapshot_ceiling_disabled": {
+   "last_real": {
+    "at": "2026-10-27T00:24:16Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:ff52976ef7b10a75",
+     "guard": "item:7bcc3ca2c15aeade",
+     "row": "c4b48a75fb3a9e7f",
+     "test": "test:fe23d3f075cffedc"
+    },
+    "path": "cargo",
+    "secs": 3.2,
+    "sha": "96207a660496a3fcb0f90de64cc22fbeace54c41",
+    "verdict": "RED"
+   }
+  },
+  "concurrent_fallback_slots_omitted": {
+   "last_real": {
+    "at": "2026-10-27T00:28:27Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:7bedbd6e8fc938d8",
+     "guard": "file:633295f2326017ff",
+     "row": "c41ee55cf42559c2",
+     "test": "test:61e16d2fb89836b0"
+    },
+    "path": "cargo",
+    "secs": 1.7,
+    "sha": "96207a660496a3fcb0f90de64cc22fbeace54c41",
+    "verdict": "RED"
+   }
+  },
+  "future_fade_initial_maps_omitted": {
+   "last_real": {
+    "at": "2026-10-27T00:24:27Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:51ed286896b946fa",
+     "guard": "item:acd69d53cf1300c9",
+     "row": "48737ad4069651de",
+     "test": "test:5624165912c88d3f"
+    },
+    "path": "cargo",
+    "secs": 1.8,
+    "sha": "96207a660496a3fcb0f90de64cc22fbeace54c41",
+    "verdict": "RED"
+   }
+  },
+  "player_memory_admission_omitted": {
+   "last_real": {
+    "at": "2026-10-27T00:24:25Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:e7343599c024259c",
+     "guard": "item:7769eb3ca9104eb0",
+     "row": "e6a427fb2c521547",
+     "test": "test:4b501449d25a5d48"
+    },
+    "path": "cargo",
+    "secs": 1.9,
+    "sha": "96207a660496a3fcb0f90de64cc22fbeace54c41",
+    "verdict": "RED"
+   }
+  },
+  "recovery_copies_not_reserved": {
+   "last_real": {
+    "at": "2026-10-27T00:28:28Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:7bedbd6e8fc938d8",
+     "guard": "file:633295f2326017ff",
+     "row": "133ebab3221366b7",
+     "test": "test:61e16d2fb89836b0"
+    },
+    "path": "cargo",
+    "secs": 1.6,
+    "sha": "96207a660496a3fcb0f90de64cc22fbeace54c41",
+    "verdict": "RED"
+   }
+  },
+  "recovery_memory_preflight_moved_after_reconstruction": {
+   "last_real": {
+    "at": "2026-10-27T00:24:23Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:f72a9893e8c4fbf9",
+     "guard": "item:7e9568401df04197",
+     "row": "72e2edc5eec3ce1d",
+     "test": "test:fe23d3f075cffedc"
+    },
+    "path": "cargo",
+    "secs": 3.7,
+    "sha": "96207a660496a3fcb0f90de64cc22fbeace54c41",
+    "verdict": "RED"
+   }
+  },
+  "typed_authored_map_expansion_omitted": {
+   "last_real": {
+    "at": "2026-10-27T00:24:20Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:ff52976ef7b10a75",
+     "guard": "item:7bcc3ca2c15aeade",
+     "row": "ea27d2d99e8fadc4",
+     "test": "test:fe23d3f075cffedc"
+    },
+    "path": "cargo",
+    "secs": 3.3,
+    "sha": "96207a660496a3fcb0f90de64cc22fbeace54c41",
+    "verdict": "RED"
+   }
+  }
+ },
+ "version": 1
+}

@@ -35,6 +35,7 @@ pub struct RestoredInstallation {
 impl Snapshot {
     pub fn encode(&self) -> Result<String, Error> {
         let document = self.canonical()?;
+        crate::memory::reserve(self)?;
         self.validate()?;
         Ok(document)
     }
@@ -46,6 +47,9 @@ impl Snapshot {
                 "recovery document must use canonical encoding".into(),
             ));
         }
+        // Reject decoded/runtime expansion before compiling configurations or
+        // reconstructing any players from an untrusted retained/fallback image.
+        crate::memory::reserve(&snapshot)?;
         let (configuration, arrays) = snapshot.validate()?;
         Ok(RestoredInstallation {
             configuration,
@@ -80,37 +84,9 @@ impl Snapshot {
                 "snapshot revision lacks completion headroom".into(),
             ));
         }
-        let maximum_document_bytes = reserved.canonical()?.len();
-        self.check_memory_budget(maximum_document_bytes)?;
+        reserved.canonical()?;
+        crate::memory::reserve(&reserved)?;
         Ok(document)
-    }
-    fn check_memory_budget(&self, document_bytes: usize) -> Result<(), Error> {
-        // Conservative admission units cover owned planes/maps, compiled/runtime
-        // nodes and references, JSON decoding and bounded recovery copies. These
-        // are policy charges, not a measurement of allocator resident memory.
-        fn plan(effect: &crate::engine::Effect) -> usize {
-            use crate::engine::Effect;
-            1024 + match effect {
-                Effect::Fade { targets, .. } => targets.len() * 1024,
-                Effect::Sequence { nodes } | Effect::Parallel { nodes } => {
-                    nodes.iter().map(plan).sum()
-                }
-                Effect::Delay { .. } => 0,
-            }
-        }
-        let units = document_bytes * 32
-            + self.configuration.encode()?.len() * 8
-            + self
-                .arrays
-                .values()
-                .map(|a| a.player.initial.len() * 1024 + plan(&a.player.effect))
-                .sum::<usize>();
-        if units > 16 * 1024 * 1024 {
-            return Err(Error::Invalid(
-                "installation exceeds 16MiB admission budget".into(),
-            ));
-        }
-        Ok(())
     }
     fn canonical(&self) -> Result<String, Error> {
         let document = canonicalize_json(&serde_json::to_vec(self)?, MAX_RECOVERY_BYTES)?;

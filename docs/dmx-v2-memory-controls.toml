@@ -1,0 +1,76 @@
+[[control]]
+name = "aggregate_snapshot_ceiling_disabled"
+guard = "aggregate decoded admission"
+file = "mqtt_dmx/src/memory.rs"
+anchor = 'if slot > ENGINE_SLOT_BYTES || total > MAX_ENGINE_RECOVERY_BYTES {'
+replacement = 'if false {'
+crate = "mqtt_dmx"
+target = "test:installation"
+test = "decoded_configuration_expansion_is_refused_before_installation_changes"
+expect_text = "dense decoded configuration bypassed aggregate memory admission"
+
+[[control]]
+name = "typed_authored_map_expansion_omitted"
+guard = "typed collection expansion"
+file = "mqtt_dmx/src/memory.rs"
+anchor = 'map_members.saturating_mul(128)'
+replacement = 'map_members.saturating_mul(0)'
+crate = "mqtt_dmx"
+target = "test:installation"
+test = "decoded_configuration_expansion_is_refused_before_installation_changes"
+expect_text = "dense decoded configuration bypassed aggregate memory admission"
+
+[[control]]
+name = "recovery_memory_preflight_moved_after_reconstruction"
+guard = "recovery preflight ordering"
+file = "mqtt_dmx/src/recovery.rs"
+anchor = 'crate::memory::reserve(&snapshot)?;'
+replacement = ''
+crate = "mqtt_dmx"
+target = "test:installation"
+test = "decoded_configuration_expansion_is_refused_before_installation_changes"
+expect_text = "memory preflight ran after recovery reconstruction validation"
+
+[[control]]
+name = "player_memory_admission_omitted"
+guard = "compiled player preflight"
+file = "mqtt_dmx/src/engine.rs"
+anchor = 'crate::memory::reserve_player(&effect, owned.len())?;'
+replacement = ''
+crate = "mqtt_dmx"
+target = "lib"
+test = "memory::tests::expanded_player_is_refused_before_runtime_allocation_and_small_player_still_runs"
+expect_text = "expanded execution bypassed its aggregate memory slot"
+
+[[control]]
+name = "future_fade_initial_maps_omitted"
+guard = "future execution allocation"
+file = "mqtt_dmx/src/memory.rs"
+anchor = 'targets.capacity().saturating_mul(512)'
+replacement = 'targets.capacity().saturating_mul(0)'
+crate = "mqtt_dmx"
+target = "lib"
+test = "memory::tests::reservations_cover_simultaneous_slots_recovery_and_future_fade_maps"
+expect_text = "a future fade's initial map was not reserved"
+
+[[control]]
+name = "concurrent_fallback_slots_omitted"
+guard = "simultaneous preparation and fallback"
+file = "mqtt_dmx/src/memory.rs"
+anchor = 'pub const ENGINE_SLOTS: usize = 11;'
+replacement = 'pub const ENGINE_SLOTS: usize = 6;'
+crate = "mqtt_dmx"
+target = "lib"
+test = "memory::tests::reservations_cover_simultaneous_slots_recovery_and_future_fade_maps"
+expect_text = "concurrent fallback slots were not reserved"
+
+[[control]]
+name = "recovery_copies_not_reserved"
+guard = "bounded encoded recovery roles"
+file = "mqtt_dmx/src/memory.rs"
+anchor = 'pub const RECOVERY_BUFFERS: usize = 16;'
+replacement = 'pub const RECOVERY_BUFFERS: usize = 0;'
+crate = "mqtt_dmx"
+target = "lib"
+test = "memory::tests::reservations_cover_simultaneous_slots_recovery_and_future_fade_maps"
+expect_text = "recovery wire copies were not reserved"

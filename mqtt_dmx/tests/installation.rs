@@ -57,6 +57,73 @@ fn config() -> Configuration {
 fn installation() -> Installation {
     Installation::initialize(config(), BTreeMap::from([(id(2), id(6))])).unwrap()
 }
+
+#[test]
+fn decoded_configuration_expansion_is_refused_before_installation_changes() {
+    let mut dense = config();
+    dense.content.values = (0..8800)
+        .map(|n| (format!("p{n:04}"), String::new()))
+        .collect();
+    dense.digest = dense.content.digest().unwrap();
+    assert!(
+        dense.encode().unwrap().len() < 128 * 1024,
+        "fixture exceeded the encoded configuration budget"
+    );
+    let result = Installation::initialize(dense.clone(), BTreeMap::from([(id(2), id(6))]));
+    assert!(
+        matches!(result, Err(ref error) if error.to_string().contains("16MiB")),
+        "dense decoded configuration bypassed aggregate memory admission"
+    );
+    let mut live = installation();
+    let now = Instant::now();
+    live.desired(&id(2), request(1), id(7), None, || now)
+        .unwrap();
+    live.tick().unwrap();
+    let output = live.output(&id(2), &channel());
+    assert!(output > 0 && output < 255);
+    let before = live.document();
+    dense.revision = Revision(2);
+    dense.expected_previous = Some(Revision(1));
+    assert!(
+        matches!(live.configure(dense, BTreeMap::new(), None, Instant::now), Err(ref error) if error.to_string().contains("16MiB"))
+    );
+    assert_eq!(
+        live.document(),
+        before,
+        "memory refusal mutated the live installation"
+    );
+    assert_eq!(
+        live.output(&id(2), &channel()),
+        output,
+        "memory refusal changed running output"
+    );
+    live.tick().unwrap();
+    assert!(
+        live.output(&id(2), &channel()) > output,
+        "memory refusal stopped the running animation"
+    );
+    // Preserve a real checkpoint's wire shape while enlarging its configuration.
+    let mut snapshot: mqtt_dmx::recovery::Snapshot = serde_json::from_str(&before).unwrap();
+    snapshot.configuration.content.values = (0..8800)
+        .map(|n| (format!("p{n:04}"), String::new()))
+        .collect();
+    snapshot.configuration.digest = snapshot.configuration.content.digest().unwrap();
+    let document =
+        dmx_protocol::canonicalize_json(&serde_json::to_vec(&snapshot).unwrap(), 256 * 1024)
+            .unwrap();
+    assert!(
+        matches!(Installation::restore(document.as_bytes()), Err(ref error) if error.to_string().contains("16MiB")),
+        "recovery reconstruction bypassed decoded memory admission"
+    );
+    snapshot.arrays.clear();
+    let malformed =
+        dmx_protocol::canonicalize_json(&serde_json::to_vec(&snapshot).unwrap(), 256 * 1024)
+            .unwrap();
+    assert!(
+        matches!(mqtt_dmx::recovery::Snapshot::decode(malformed.as_bytes()), Err(ref error) if error.to_string().contains("16MiB")),
+        "memory preflight ran after recovery reconstruction validation"
+    );
+}
 fn request(revision: u64) -> Playback {
     Playback {
         schema: 1,
@@ -317,7 +384,7 @@ fn completion_growth_is_reserved_before_accepting_a_running_snapshot() {
     let mut c = config();
     c.content.arrays.get_mut(&id(2)).unwrap().lights.insert(
         "all".into(),
-        (0..352)
+        (0..256)
             .map(|n| n.to_string())
             .collect::<Vec<_>>()
             .join(","),
@@ -338,6 +405,8 @@ fn completion_growth_is_reserved_before_accepting_a_running_snapshot() {
     let mut s: Snapshot =
         dmx_protocol::decode_strict(initialized.document().as_bytes(), 256 * 1024).unwrap();
     s.arrays.insert(id(2), array.checkpoint().unwrap());
+    // Escaped padding reaches the carrier limit before the independent decoded
+    // memory limit. Keep those guards distinguishable in their controls.
     // Find the largest current image that fits using the actual wire encoder.
     let (mut low, mut high) = (0usize, 120_000usize);
     while low < high {
@@ -347,7 +416,7 @@ fn completion_growth_is_reserved_before_accepting_a_running_snapshot() {
             .universes
             .get_mut(&id(1))
             .unwrap()
-            .description = "x".repeat(mid);
+            .description = "\"".repeat(mid);
         s.configuration.digest = s.configuration.content.digest().unwrap();
         if s.encode().is_ok() {
             low = mid
@@ -360,17 +429,13 @@ fn completion_growth_is_reserved_before_accepting_a_running_snapshot() {
         .universes
         .get_mut(&id(1))
         .unwrap()
-        .description = "x".repeat(low);
+        .description = "\"".repeat(low);
     s.configuration.digest = s.configuration.content.digest().unwrap();
     assert!(low > 0);
     s.encode().unwrap();
-    assert!(
-        s.encode_for_commit()
-            .unwrap_err()
-            .to_string()
-            .contains("carrier limit"),
-        "future held planes must fit before this execution is admitted"
-    );
+    let error = s.encode_for_commit().unwrap_err();
+    assert!(error.to_string().contains("carrier limit"),
+        "future held planes must fit before this execution is admitted: {error}; padding={low}, memory={:?}", mqtt_dmx::memory::reserve(&s));
 }
 
 fn next_config(i: &Installation) -> Configuration {

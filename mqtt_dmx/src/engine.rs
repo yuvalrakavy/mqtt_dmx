@@ -80,6 +80,7 @@ impl Player {
     ) -> Result<Self, Error> {
         let owned = ownership(owned)?;
         validate_effect(&mut effect, &owned, 0, &mut (0, 0))?;
+        crate::memory::reserve_player(&effect, owned.len())?;
         let initial = checked_planes(initial, &owned)?;
         let runtime = Some(Runtime::new(&effect));
         let mut player = Self {
