@@ -1,0 +1,21 @@
+[[control]]
+name = "accepted_initialization_never_reseeds_the_runtime"
+guard = "locally accepted output converges after a delayed runtime rejection"
+file = "mqtt_dmx/src/service_v2.rs"
+anchor = 'if reconcile && self.mode == Mode::Authoritative {'
+replacement = 'if false && reconcile && self.mode == Mode::Authoritative {'
+crate = "mqtt_dmx"
+target = "lib"
+test = "service_v2::tests::accepted_initialization_converges_after_late_expiry_without_borrowing_new_replay"
+expect_text = "accepted lighting was left stranded behind the old runtime model"
+
+[[control]]
+name = "reseed_borrows_a_newer_unselected_replay"
+guard = "repair remains bound to its original replay capability"
+file = "mqtt_dmx/src/service_v2.rs"
+anchor = 'self.stage(ack.connection, None, Mode::Authoritative, None)'
+replacement = 'self.stage(self.connection.unwrap_or(ack.connection), None, Mode::Authoritative, None)'
+crate = "mqtt_dmx"
+target = "lib"
+test = "service_v2::tests::accepted_initialization_converges_after_late_expiry_without_borrowing_new_replay"
+expect_text = "repair borrowed a newer replay capability"

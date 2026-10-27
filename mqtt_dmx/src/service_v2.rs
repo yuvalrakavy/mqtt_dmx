@@ -49,6 +49,7 @@ type SaveFuture =
 type InstallFuture =
     std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>>;
 struct Acknowledgement {
+    connection: RecoveryConnection,
     future: InstallFuture,
     reply: Option<(Request, Value)>,
 }
@@ -226,10 +227,34 @@ impl Owner {
         self.dirty = true;
         self.view();
         self.install = Some(Acknowledgement {
+            connection,
             future: Box::pin(ticket.wait()),
             reply: initiating,
         });
         Ok(())
+    }
+    fn installation_finished(&mut self, result: Result<(), String>) {
+        let Some(ack) = self.install.take() else {
+            return;
+        };
+        let reconcile = result.is_err() && ack.reply.is_some();
+        if let Some((request, answer)) = ack.reply {
+            let _ = request
+                .reply
+                .send(result.clone().map(|()| Some(answer)).map_err(rejected));
+        }
+        if let Err(error) = result {
+            tracing::debug!(%error, "DMX recovery installation was not acknowledged");
+        }
+        if reconcile && self.mode == Mode::Authoritative {
+            // Local activation was already accepted. Expiry or command cutoff
+            // may reject the later runtime install; converge the model without
+            // replaying the operation or borrowing a newer replay capability.
+            if let Err(error) = self.stage(ack.connection, None, Mode::Authoritative, None) {
+                tracing::debug!(%error, "Accepted DMX state awaits the next broker replay");
+            }
+        }
+        self.dirty = true;
     }
     fn broker(
         &mut self,
@@ -445,10 +470,7 @@ impl ProcessService for DmxService {
                     if save_worker.overdue(Instant::now(), Duration::from_secs(30)) { return Err("fallback worker exceeded its execution bound".into()); }
                 }
                 result = async { owner.install.as_mut().unwrap().future.as_mut().await }, if owner.install.is_some() => {
-                    let ack = owner.install.take().unwrap();
-                    if let Some((request, answer)) = ack.reply { let _ = request.reply.send(result.clone().map(|()| Some(answer)).map_err(rejected)); }
-                    if let Err(error) = result { tracing::debug!(%error, "DMX recovery installation lost its connection"); }
-                    owner.dirty = true;
+                    owner.installation_finished(result);
                 }
                 result = async { job.as_mut().unwrap().await }, if job.is_some() => {
                     job = None; prepared = Some(result.map_err(|e| e.to_string())?);
@@ -657,4 +679,225 @@ fn model(live: &Installation, cause: &RequestContext) -> Result<RecoveryImage, S
         .into(),
         snapshot: Some(snapshot(live, cause)?),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::sync::oneshot;
+    struct ProbeDriver {
+        boot: String,
+        report: Option<oneshot::Sender<Reporter>>,
+    }
+    impl DeviceDriver for ProbeDriver {
+        fn info(&self) -> DriverInfo {
+            DriverInfo {
+                feedback: Feedback::Assumed,
+                ..Default::default()
+            }
+        }
+        fn request_policy(&self) -> RequestPolicy {
+            RequestPolicy::Fenced(TargetGenerations {
+                instance: self.boot.clone(),
+                targets: BTreeMap::new(),
+            })
+        }
+        async fn connect(&mut self, context: &mut LinkContext) -> Result<(), LinkError> {
+            if let Some(report) = self.report.take() {
+                let _ = report.send(context.report.clone());
+            }
+            Ok(())
+        }
+        async fn disconnect(&mut self) {}
+        async fn read_state(&mut self, _: Scope) -> Result<Vec<TargetState>, OpError> {
+            Ok(vec![])
+        }
+        async fn apply(&mut self, _: &str, _: &PropertyMap) -> Result<(), OpError> {
+            Ok(())
+        }
+        async fn configure(&mut self, _: &str, _: Option<&Value>) -> Result<(), OpError> {
+            Ok(())
+        }
+        async fn execute(
+            &mut self,
+            _: Option<&str>,
+            _: &CommandCall,
+        ) -> Result<Option<Value>, OpError> {
+            Ok(None)
+        }
+    }
+    struct ProbeService {
+        driver: ProbeDriver,
+        handle: oneshot::Sender<RecoveryHandle>,
+    }
+    impl ProcessService for ProbeService {
+        type Driver = ProbeDriver;
+        async fn run(self, mut context: ServiceContext<ProbeDriver>) -> Result<(), String> {
+            let recovery = context.recovery().unwrap();
+            context.ready(self.driver)?;
+            let _ = self.handle.send(recovery);
+            context.cancelled().await;
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn accepted_initialization_converges_after_late_expiry_without_borrowing_new_replay() {
+        for newer_replay in [false, true] {
+            let broker = mqtt_test_broker::FakeBroker::start().await;
+            let boot = uuid::Uuid::new_v4().to_string();
+            let (report_tx, report_rx) = oneshot::channel();
+            let (handle_tx, handle_rx) = oneshot::channel();
+            let running = bridge()
+                .instance("probe")
+                .broker(&broker.address())
+                .start_managed(ProbeService {
+                    driver: ProbeDriver {
+                        boot: boot.clone(),
+                        report: Some(report_tx),
+                    },
+                    handle: handle_tx,
+                })
+                .await
+                .unwrap();
+            let mut recovery = handle_rx.await.unwrap();
+            let report = report_rx.await.unwrap();
+            let readback = tokio::time::timeout(Duration::from_secs(2), recovery.readback())
+                .await
+                .unwrap()
+                .unwrap();
+            recovery
+                .complete(
+                    readback.connection,
+                    empty_image(&boot, &RequestContext::default()),
+                    RecoveryReady::RecoveryOnly,
+                    None,
+                )
+                .await
+                .unwrap();
+            let mut owner = Owner {
+                live: None,
+                frames: None,
+                sender: DatagramSender::default(),
+                mode: Mode::Waiting,
+                base: None,
+                boot: boot.clone(),
+                connection: Some(readback.connection),
+                recovery: recovery.clone(),
+                view: Arc::new(arc_swap::ArcSwap::from_pointee(View {
+                    live: None,
+                    mode: Mode::Waiting,
+                })),
+                reporter: Some(report.clone()),
+                dirty: false,
+                cause: RequestContext::default(),
+                install: None,
+            };
+            let content = dmx_protocol::configuration::Content::default();
+            let candidate = Installation::initialize(
+                dmx_protocol::configuration::Configuration {
+                    schema: 1,
+                    history: id(),
+                    authority: id(),
+                    revision: dmx_protocol::Revision(1),
+                    expected_previous: None,
+                    digest: content.digest().unwrap(),
+                    content,
+                },
+                BTreeMap::new(),
+            )
+            .unwrap();
+            let authority = String::from(candidate.configuration().authority.clone());
+            let (reply, response) = oneshot::channel();
+            let permit = Arc::new(tokio::sync::Semaphore::new(1))
+                .acquire_owned()
+                .await
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_millis(50);
+            let request = Request {
+                target: None,
+                context: RequestContext::new(&boot)
+                    .unwrap()
+                    .with_deadline(Some(deadline)),
+                report: report.clone(),
+                completion: None,
+                action: Action::Command(CommandCall {
+                    command: "Initialize".into(),
+                    params: PropertyMap::new(),
+                }),
+                reply,
+                _bytes: permit,
+            };
+            owner
+                .stage(
+                    readback.connection,
+                    Some(candidate),
+                    Mode::Authoritative,
+                    Some((request, Value::Null)),
+                )
+                .unwrap();
+            // SDK tasks share this test's current-thread runtime. Delay yielding
+            // until the staged request expires, deterministically after local
+            // activation and before the runtime's final deadline check.
+            std::thread::sleep(Duration::from_millis(70));
+            let failed = tokio::time::timeout(
+                Duration::from_secs(2),
+                owner.install.as_mut().unwrap().future.as_mut(),
+            )
+            .await
+            .unwrap();
+            assert!(failed.as_ref().unwrap_err().contains("expired"));
+            assert_eq!(owner.mode, Mode::Authoritative);
+            assert!(!report.request_is_current(None, &RequestContext::new(&authority).unwrap()));
+            if newer_replay {
+                broker.drop_connection();
+                let next = tokio::time::timeout(Duration::from_secs(3), recovery.readback())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_ne!(next.connection, readback.connection);
+                owner.connection = Some(next.connection);
+            }
+            owner.installation_finished(failed);
+            assert!(
+                response.await.unwrap().is_err(),
+                "failed command outcome was reported as success"
+            );
+            assert_eq!(
+                String::from(
+                    owner
+                        .live
+                        .as_ref()
+                        .unwrap()
+                        .configuration()
+                        .authority
+                        .clone()
+                ),
+                authority
+            );
+            if newer_replay {
+                assert!(
+                    owner.install.is_none(),
+                    "repair borrowed a newer replay capability"
+                );
+                assert!(!report.request_is_current(None, &RequestContext::new(&authority).unwrap()));
+            } else {
+                assert!(
+                    owner.install.is_some(),
+                    "accepted lighting was left stranded behind the old runtime model"
+                );
+                let repaired = tokio::time::timeout(
+                    Duration::from_secs(2),
+                    owner.install.as_mut().unwrap().future.as_mut(),
+                )
+                .await
+                .unwrap();
+                owner.installation_finished(repaired.clone());
+                repaired.unwrap();
+                assert!(report.request_is_current(None, &RequestContext::new(&authority).unwrap()));
+                assert!(!report.request_is_current(None, &RequestContext::new(&boot).unwrap()));
+            }
+            assert!(running.stop().await);
+        }
+    }
 }

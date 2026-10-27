@@ -1,0 +1,39 @@
+{
+ "rows": {
+  "accepted_initialization_never_reseeds_the_runtime": {
+   "last_real": {
+    "at": "2026-10-27T20:24:12Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:ab016f1ddedaff6b",
+     "guard": "item:54c01b98d4a8e044",
+     "row": "c97cebffcf122f2a",
+     "test": "test:1adb01c6023486b7"
+    },
+    "path": "cargo",
+    "secs": 3.1,
+    "sha": "bcdc568f9f2497a317c3ab80b945e4d816f95653",
+    "verdict": "RED"
+   }
+  },
+  "reseed_borrows_a_newer_unselected_replay": {
+   "last_real": {
+    "at": "2026-10-27T20:24:16Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:ab016f1ddedaff6b",
+     "guard": "item:54c01b98d4a8e044",
+     "row": "acc32e5c8cd38905",
+     "test": "test:1adb01c6023486b7"
+    },
+    "path": "cargo",
+    "secs": 4.2,
+    "sha": "bcdc568f9f2497a317c3ab80b945e4d816f95653",
+    "verdict": "RED"
+   }
+  }
+ },
+ "version": 1
+}
