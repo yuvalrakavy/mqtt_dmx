@@ -9,7 +9,7 @@ edition = "2021"
 dmx_protocol = { path = "../dmx_protocol" }
 thiserror = "2.0.18"
 error-stack = "0.6.0" 
-tokio = { version="1.49.0", features = ["full", "tracing"]}
+tokio = { version="1.53.2", features = ["full", "tracing"]}
 tokio-stream = "0.1.18"
 tokio-util = "0.7.18"
 async-channel = "2.5.0"
@@ -21,14 +21,16 @@ log = "0.4.29"
 tracing = "0.1"
 chrono = { version = "0.4.44", features = ["serde"] }
 bytes = "1.11.1"
-tracing-init = { git="http://github.com/yuvalrakavy/tracing-init.git", features = ["otel"] }
+uuid = { version = "1", features = ["v4"] }
+tracing-init = { git="https://github.com/yuvalrakavy/tracing-init.git", rev = "c3044cd", features = ["otel"] }
+mqtt-bridge-kit = { git="https://github.com/yuvalrakavy/tracing-init.git", rev = "c3044cd" }
 built = "0.8.0" 
 
 [build-dependencies]
 built = { version= "0.8.0", features = ["chrono"] }
 
 [dev-dependencies]
-mqtt-test-broker = { git = "http://github.com/yuvalrakavy/tracing-init.git", rev = "b82de1c2c49fb03d33b304880e5ca197374ac1cc" }
+mqtt-test-broker = { git = "https://github.com/yuvalrakavy/tracing-init.git", rev = "c3044cd" }
 tempfile = "3"
 
 # to run with logging use
