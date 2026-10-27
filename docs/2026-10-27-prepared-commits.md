@@ -48,5 +48,7 @@ Restart regression was observed RED (128 instead of original 0). The correction
 selects current held planes for Desired and original planes for Restart. Both
 branches have separate guard-removal controls (both RED in 5.4 seconds, restored).
 The full workspace now passes 144/144, all-target host clippy and armv7 compilation
-against the pinned reviewed BridgeKit source. Confirming review is pending.
+against the pinned reviewed BridgeKit source. The required confirming reader
+reviewed fix `ca5c15f` against `e77e822` and found no further issues. This was a
+read-only GPT-6.1 Sol review; no new tests or cross-family coverage are claimed.
 This does not establish managed-service scheduling or MQTT acceptance.
