@@ -1,13 +1,24 @@
 [[control]]
-name = "prepared_restart_uses_old_planes"
-guard = "new execution starts from commit-time planes"
+name = "prepared_new_effect_uses_old_planes"
+guard = "new Desired execution starts from commit-time planes"
 file = "mqtt_dmx/src/ordered_array.rs"
-anchor = 'live.player.snapshot().held,'
-replacement = 'Vec::new(),'
+anchor = 'Operation::Desired(_) => live.player.snapshot().held,'
+replacement = 'Operation::Desired(_) => Vec::new(),'
 crate = "mqtt_dmx"
 target = "test:recovery_continuity"
-test = "prepared_restart_begins_at_the_live_commit_planes"
-expect_text = "prepared restart jumped back to preparation-time planes"
+test = "prepared_new_effect_begins_at_the_live_commit_planes"
+expect_text = "prepared new effect jumped back to preparation-time planes"
+
+[[control]]
+name = "prepared_restart_loses_original_planes"
+guard = "explicit Restart returns to original execution start"
+file = "mqtt_dmx/src/ordered_array.rs"
+anchor = 'Operation::Command(_) => live.player.snapshot().initial,'
+replacement = 'Operation::Command(_) => live.player.snapshot().held,'
+crate = "mqtt_dmx"
+target = "test:recovery_continuity"
+test = "prepared_restart_returns_to_the_original_execution_start"
+expect_text = "prepared restart lost the original execution start"
 
 [[control]]
 name = "prepared_stop_does_not_stop"

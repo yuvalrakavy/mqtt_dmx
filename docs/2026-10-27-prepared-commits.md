@@ -10,8 +10,8 @@ edit identity rejects a candidate after an accepted request or a restored replac
 including identical persisted generations. Ticks and natural completions retain that
 identity. Duplicate intent keeps its original receipt and the latest live snapshot.
 
-Final commit rebases unchanged arrays on current live progress. Restart/new execution
-uses commit-time planes; Stop freezes the current frame; brightness preserves a
+Final commit rebases unchanged arrays on current live progress. New Desired execution
+uses commit-time planes; Restart returns to its original start. Stop freezes the current frame; brightness preserves a
 completion that occurred during preparation. One accepted edit advances the latest
 installation revision once. Admission and the final deadline check precede the swap;
 all failure paths leave the live installation unchanged.
@@ -36,5 +36,17 @@ original 16-test suite stayed green under both mutants. Two retained public-API
 tests now detect them; the strengthened suite passes 18/18 independently and in the
 author tree. Both new author-run controls fail as expected (6.1 seconds total) and
 are restored. Configuration edit-identity rotation was also independently mutated
-and detected by an existing test. Depth review remains pending.
+and detected by an existing test. Depth review found no further issues in the
+frozen core delta; it did not run timing/RSS, MQTT or hardware checks.
+
+Subsequent author integration review caught an S2 semantic regression in the new
+prepared path: it used current planes for explicit Restart, whereas the existing
+engine and its retained regression require original starting planes. The original
+preparation fixture incorrectly expected the new-effect semantics for Restart.
+That fixture now uses a real parameter-changing Desired operation; a separate
+Restart regression was observed RED (128 instead of original 0). The correction
+selects current held planes for Desired and original planes for Restart. Both
+branches have separate guard-removal controls (both RED in 5.4 seconds, restored).
+The full workspace now passes 144/144, all-target host clippy and armv7 compilation
+against the pinned reviewed BridgeKit source. Confirming review is pending.
 This does not establish managed-service scheduling or MQTT acceptance.

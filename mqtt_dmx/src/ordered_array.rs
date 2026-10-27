@@ -65,8 +65,9 @@ pub struct Checkpoint {
 
 impl OrderedArray {
     /// Rebase a validated edit on the owner's current frame. No label/default
-    /// resolution happens here. New executions start from the actual commit
-    /// planes; brightness and Stop preserve the intervening live progress.
+    /// resolution happens here. New Desired executions use commit-time planes;
+    /// Restart retains the original execution start. Brightness and Stop keep
+    /// intervening live progress.
     pub(crate) fn rebase_prepared_from(&mut self, live: &Self, edited: bool) -> Result<(), Error> {
         if !edited {
             if self.owned == live.owned && self.playback == live.playback {
@@ -78,10 +79,14 @@ impl OrderedArray {
             return Err(Error::Invalid("prepared playback mapping changed".into()));
         }
         if self.execution != live.execution {
+            let initial = match &self.last_operation {
+                Operation::Desired(_) => live.player.snapshot().held,
+                Operation::Command(_) => live.player.snapshot().initial,
+            };
             self.player = Player::start(
                 self.owned.clone(),
                 self.player.effect().clone(),
-                live.player.snapshot().held,
+                initial,
                 self.playback.level,
             )?;
         } else {

@@ -205,7 +205,44 @@ fn a_prepared_duplicate_keeps_the_receipt_and_later_completed_state() {
 }
 
 #[test]
-fn prepared_restart_begins_at_the_live_commit_planes() {
+fn prepared_new_effect_begins_at_the_live_commit_planes() {
+    let mut live = installation();
+    let snapshot: mqtt_dmx::recovery::Snapshot = serde_json::from_str(&live.document()).unwrap();
+    let mut playback = Playback::decode(snapshot.arrays[&id(2)].playback.as_bytes()).unwrap();
+    playback.revision = Revision(2);
+    playback.parameters.insert("scene".into(), "changed".into());
+    let prepared = live
+        .preparation(
+            Edit::Desired {
+                array: id(2),
+                playback,
+                execution: id(8),
+            },
+            None,
+        )
+        .run()
+        .unwrap();
+    live.tick().unwrap();
+    live.tick().unwrap();
+    let before = live.output(&id(2), &channel());
+    assert!(before > 0 && before < 255);
+    let EditOutcome::Playback { receipt, .. } = prepared.commit(&mut live, Instant::now).unwrap()
+    else {
+        panic!("not playback")
+    };
+    assert_eq!(receipt.execution, id(8));
+    assert_eq!(
+        live.output(&id(2), &channel()),
+        before,
+        "prepared new effect jumped back to preparation-time planes"
+    );
+    live.tick().unwrap();
+    assert!(live.output(&id(2), &channel()) > before);
+    Installation::restore(live.document().as_bytes()).unwrap();
+}
+
+#[test]
+fn prepared_restart_returns_to_the_original_execution_start() {
     let mut live = installation();
     let prepared = live
         .preparation(
@@ -228,21 +265,15 @@ fn prepared_restart_begins_at_the_live_commit_planes() {
         .unwrap();
     live.tick().unwrap();
     live.tick().unwrap();
-    let before = live.output(&id(2), &channel());
-    assert!(before > 0 && before < 255);
-    let EditOutcome::Playback { receipt, .. } = prepared.commit(&mut live, Instant::now).unwrap()
-    else {
-        panic!("not playback")
-    };
-    assert_eq!(receipt.execution, id(8));
+    assert_eq!(live.output(&id(2), &channel()), 128);
+    prepared.commit(&mut live, Instant::now).unwrap();
     assert_eq!(
         live.output(&id(2), &channel()),
-        before,
-        "prepared restart jumped back to preparation-time planes"
+        0,
+        "prepared restart lost the original execution start"
     );
     live.tick().unwrap();
-    assert!(live.output(&id(2), &channel()) > before);
-    Installation::restore(live.document().as_bytes()).unwrap();
+    assert_eq!(live.output(&id(2), &channel()), 64);
 }
 
 #[test]
