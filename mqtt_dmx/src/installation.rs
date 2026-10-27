@@ -33,6 +33,14 @@ pub struct ConfigurationCommit {
     pub released: Vec<Channel>,
 }
 
+#[derive(serde::Serialize)]
+pub struct ArrayState {
+    pub playback: String,
+    pub status: crate::engine::Status,
+    pub execution: Id,
+    pub operation_revision: Revision,
+}
+
 impl Installation {
     pub fn initialize(
         configuration: Configuration,
@@ -138,6 +146,31 @@ impl Installation {
     }
     pub fn configuration(&self) -> &Configuration {
         self.configuration.configuration()
+    }
+    pub fn validate_configuration(&self, configuration: &Configuration) -> Result<(), Error> {
+        let current = self.configuration();
+        if configuration.history != current.history || configuration.authority != current.authority
+        {
+            return Err(Error::Invalid(
+                "configuration history/authority is fenced".into(),
+            ));
+        }
+        let encoded = configuration.encode()?;
+        if configuration.revision < current.revision {
+            return Err(Error::Invalid("configuration superseded".into()));
+        }
+        if configuration.revision == current.revision {
+            if encoded != current.encode()? {
+                return Err(Error::Invalid(
+                    "conflicting configuration at equal revision".into(),
+                ));
+            }
+        } else if configuration.expected_previous != Some(current.revision) {
+            return Err(Error::Invalid(
+                "configuration expected previous revision differs".into(),
+            ));
+        }
+        Ok(())
     }
     /// Fixed physical ownership used by the output adapter; never resolve labels
     /// or acquire new channels while rendering a frame.
@@ -321,6 +354,48 @@ impl Installation {
     }
     pub fn receipt(&self, id: &Id) -> Option<Receipt> {
         self.arrays.get(id).map(OrderedArray::receipt)
+    }
+    /// Immutable admission views use the same ordering guards as the owner,
+    /// before BridgeKit can satisfy a request from its cached state.
+    pub fn validate_playback(
+        &self,
+        id: &Id,
+        request: &Playback,
+        deadline: Option<Instant>,
+        now: Instant,
+    ) -> Result<(), Error> {
+        self.array(id)?
+            .validate_desired(request, deadline, now)
+            .map(|_| ())
+    }
+    pub fn validate_control(
+        &self,
+        id: &Id,
+        request: &Command,
+        deadline: Option<Instant>,
+        now: Instant,
+    ) -> Result<(), Error> {
+        self.array(id)?
+            .validate_command(request, deadline, now)
+            .map(|_| ())
+    }
+    /// Logical engine output, reported as assumed rather than fixture readback.
+    pub fn states(&self) -> Result<BTreeMap<Id, ArrayState>, Error> {
+        self.arrays
+            .iter()
+            .map(|(id, array)| {
+                let receipt = array.receipt();
+                Ok((
+                    id.clone(),
+                    ArrayState {
+                        playback: array.playback().encode()?,
+                        status: receipt.status,
+                        execution: receipt.execution,
+                        operation_revision: receipt.revision,
+                    },
+                ))
+            })
+            .collect()
     }
     pub fn output(&self, id: &Id, channel: &Channel) -> u8 {
         self.arrays.get(id).map_or(0, |a| a.output(channel))

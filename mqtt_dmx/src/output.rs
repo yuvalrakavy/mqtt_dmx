@@ -103,6 +103,7 @@ impl Frame {
     }
 }
 
+#[derive(Clone)]
 pub struct Frames {
     universes: BTreeMap<Address, Frame>,
 }

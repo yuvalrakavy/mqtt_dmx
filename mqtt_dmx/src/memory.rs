@@ -1,4 +1,6 @@
-//! Conservative engine/recovery admission units, not allocator/RSS measurement.
+//! Component-level conservative admission units, not a whole-service/RSS bound.
+//! The owner deferred exact accounting across all service/proxy/recovery copies;
+//! these existing per-document and player guards remain enforced.
 //! Each decoded/compiled preparation fits one slot. Six slots cover the live
 //! installation, candidate, captured and completion-reserved checkpoints, JSON
 //! expansion and codec validation replacement (including compiler scratch players).

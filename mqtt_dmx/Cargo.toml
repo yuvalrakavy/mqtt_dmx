@@ -21,16 +21,17 @@ log = "0.4.29"
 tracing = "0.1"
 chrono = { version = "0.4.44", features = ["serde"] }
 bytes = "1.11.1"
+arc-swap = "1"
 uuid = { version = "1", features = ["v4"] }
-tracing-init = { git="https://github.com/yuvalrakavy/tracing-init.git", rev = "c3044cd", features = ["otel"] }
-mqtt-bridge-kit = { git="https://github.com/yuvalrakavy/tracing-init.git", rev = "c3044cd" }
+tracing-init = { git="https://github.com/yuvalrakavy/tracing-init.git", rev = "7d33a53", features = ["otel"] }
+mqtt-bridge-kit = { git="https://github.com/yuvalrakavy/tracing-init.git", rev = "7d33a53" }
 built = "0.8.0" 
 
 [build-dependencies]
 built = { version= "0.8.0", features = ["chrono"] }
 
 [dev-dependencies]
-mqtt-test-broker = { git = "https://github.com/yuvalrakavy/tracing-init.git", rev = "c3044cd" }
+mqtt-test-broker = { git = "https://github.com/yuvalrakavy/tracing-init.git", rev = "7d33a53" }
 tempfile = "3"
 
 # to run with logging use

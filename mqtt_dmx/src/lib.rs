@@ -9,3 +9,4 @@ pub mod output;
 pub mod recovery;
 pub mod recovery_selection;
 pub mod recovery_file;
+pub mod service_v2;
