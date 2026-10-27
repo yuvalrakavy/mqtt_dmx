@@ -31,4 +31,7 @@ host all-target lint and Raspberry Pi armv7 compilation passed before the owner-
 correction. The correction receives its own lint and confirming review. Review uses
 GPT-family agents only; no cross-family or physical-hardware verification is claimed.
 
-The confirming verdict is pending. P3 Store integration has not been implemented.
+The confirming reader found no further blocking issue in the correction. Its
+independent test attempt could not open the shared build-cache lock; the author
+ran the real regression, both controls and full 151-test suite successfully.
+All-target lint also passes after correction. P3 Store integration is next.
