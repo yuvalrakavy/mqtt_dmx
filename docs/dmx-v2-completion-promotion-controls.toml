@@ -35,7 +35,10 @@ expect_text = "completion promotion did not advance the selected cut exactly onc
 name = "promotion_keeps_running_wire_snapshot"
 guard = "promoted completion is captured in the authoritative wire document"
 file = "mqtt_dmx/src/installation.rs"
-anchor = 'self.document = Arc::from(self.capture(None, self.revision)?.encode_for_commit()?);'
+anchor = '''self.document = Arc::from(
+                self.capture(None, self.revision)?
+                    .encode_validated_for_commit()?,
+            );'''
 replacement = 'let _ = &self.document;'
 crate = "mqtt_dmx"
 target = "test:recovery_continuity"

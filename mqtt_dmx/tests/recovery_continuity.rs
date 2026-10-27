@@ -4,7 +4,7 @@ use dmx_protocol::{
 };
 use mqtt_dmx::{
     engine::{Channel, Status},
-    installation::Installation,
+    installation::{Edit, EditOutcome, Installation},
     ordered_array::Command,
 };
 use std::{collections::BTreeMap, time::Instant};
@@ -83,6 +83,336 @@ fn installation() -> Installation {
         )
         .unwrap();
     installation
+}
+
+#[test]
+fn prepared_commit_expiring_at_the_final_swap_preserves_live_state() {
+    let mut live = installation();
+    let now = Instant::now();
+    let deadline = now + std::time::Duration::from_secs(5);
+    let prepared = live
+        .preparation(
+            Edit::Command {
+                array: id(2),
+                command: Command {
+                    revision: Revision(2),
+                    expected_playback: Revision(1),
+                    expected_execution: id(7),
+                    history: id(4),
+                    authority: id(5),
+                    generation: id(3),
+                    restart: false,
+                },
+                execution: id(8),
+            },
+            Some(deadline),
+        )
+        .run()
+        .unwrap();
+    live.tick().unwrap();
+    let before = live.document();
+    let frame = live.output(&id(2), &channel());
+    let calls = std::cell::Cell::new(0);
+    assert!(
+        prepared
+            .commit(&mut live, || {
+                let call = calls.get();
+                calls.set(call + 1);
+                if call == 0 {
+                    now
+                } else {
+                    deadline
+                }
+            })
+            .is_err(),
+        "prepared edit expired during final admission but committed"
+    );
+    assert_eq!(live.document(), before);
+    assert_eq!(live.output(&id(2), &channel()), frame);
+}
+
+#[test]
+fn a_later_accepted_edit_retires_existing_preparation() {
+    let mut live = installation();
+    let prepared = live
+        .preparation(
+            Edit::Command {
+                array: id(2),
+                command: Command {
+                    revision: Revision(2),
+                    expected_playback: Revision(1),
+                    expected_execution: id(7),
+                    history: id(4),
+                    authority: id(5),
+                    generation: id(3),
+                    restart: false,
+                },
+                execution: id(8),
+            },
+            None,
+        )
+        .run()
+        .unwrap();
+    let snapshot: mqtt_dmx::recovery::Snapshot = serde_json::from_str(&live.document()).unwrap();
+    let mut playback = Playback::decode(snapshot.arrays[&id(2)].playback.as_bytes()).unwrap();
+    playback.revision = Revision(2);
+    playback.level = Level::try_from(500).unwrap();
+    live.desired(&id(2), playback, id(9), None, Instant::now)
+        .unwrap();
+    let document = live.document();
+    assert!(
+        prepared.commit(&mut live, Instant::now).is_err(),
+        "accepted edit did not retire prior preparation"
+    );
+    assert_eq!(live.document(), document);
+}
+
+#[test]
+fn a_prepared_duplicate_keeps_the_receipt_and_later_completed_state() {
+    let mut live = installation();
+    let snapshot: mqtt_dmx::recovery::Snapshot = serde_json::from_str(&live.document()).unwrap();
+    let playback = Playback::decode(snapshot.arrays[&id(2)].playback.as_bytes()).unwrap();
+    let prepared = live
+        .preparation(
+            Edit::Desired {
+                array: id(2),
+                playback,
+                execution: id(8),
+            },
+            None,
+        )
+        .run()
+        .unwrap();
+    for _ in 0..4 {
+        live.tick().unwrap();
+    }
+    let document = live.document();
+    let EditOutcome::Playback { receipt, .. } = prepared.commit(&mut live, Instant::now).unwrap()
+    else {
+        panic!("not playback")
+    };
+    assert_eq!(
+        receipt.status,
+        Status::Running,
+        "duplicate lost its original receipt"
+    );
+    assert_eq!(live.receipt(&id(2)).unwrap().status, Status::Completed);
+    assert_eq!(
+        live.document(),
+        document,
+        "duplicate replaced the latest completed cut"
+    );
+}
+
+#[test]
+fn prepared_restart_begins_at_the_live_commit_planes() {
+    let mut live = installation();
+    let prepared = live
+        .preparation(
+            Edit::Command {
+                array: id(2),
+                command: Command {
+                    revision: Revision(2),
+                    expected_playback: Revision(1),
+                    expected_execution: id(7),
+                    history: id(4),
+                    authority: id(5),
+                    generation: id(3),
+                    restart: true,
+                },
+                execution: id(8),
+            },
+            None,
+        )
+        .run()
+        .unwrap();
+    live.tick().unwrap();
+    live.tick().unwrap();
+    let before = live.output(&id(2), &channel());
+    assert!(before > 0 && before < 255);
+    let EditOutcome::Playback { receipt, .. } = prepared.commit(&mut live, Instant::now).unwrap()
+    else {
+        panic!("not playback")
+    };
+    assert_eq!(receipt.execution, id(8));
+    assert_eq!(
+        live.output(&id(2), &channel()),
+        before,
+        "prepared restart jumped back to preparation-time planes"
+    );
+    live.tick().unwrap();
+    assert!(live.output(&id(2), &channel()) > before);
+    Installation::restore(live.document().as_bytes()).unwrap();
+}
+
+#[test]
+fn prepared_stop_freezes_the_commit_frame_and_not_the_preparation_frame() {
+    let mut live = installation();
+    let prepared = live
+        .preparation(
+            Edit::Command {
+                array: id(2),
+                command: Command {
+                    revision: Revision(2),
+                    expected_playback: Revision(1),
+                    expected_execution: id(7),
+                    history: id(4),
+                    authority: id(5),
+                    generation: id(3),
+                    restart: false,
+                },
+                execution: id(8),
+            },
+            None,
+        )
+        .run()
+        .unwrap();
+    live.tick().unwrap();
+    live.tick().unwrap();
+    let before = live.output(&id(2), &channel());
+    prepared.commit(&mut live, Instant::now).unwrap();
+    for _ in 0..10 {
+        live.tick().unwrap();
+    }
+    assert_eq!(
+        live.output(&id(2), &channel()),
+        before,
+        "prepared stop froze an old frame"
+    );
+    assert_eq!(live.receipt(&id(2)).unwrap().status, Status::Stopped);
+    Installation::restore(live.document().as_bytes()).unwrap();
+}
+
+#[test]
+fn prepared_brightness_keeps_a_completion_that_happened_during_compilation() {
+    let mut live = installation();
+    let snapshot: mqtt_dmx::recovery::Snapshot = serde_json::from_str(&live.document()).unwrap();
+    let mut playback = Playback::decode(snapshot.arrays[&id(2)].playback.as_bytes()).unwrap();
+    playback.revision = Revision(2);
+    playback.level = Level::try_from(500).unwrap();
+    let prepared = live
+        .preparation(
+            Edit::Desired {
+                array: id(2),
+                playback,
+                execution: id(8),
+            },
+            None,
+        )
+        .run()
+        .unwrap();
+    for _ in 0..4 {
+        live.tick().unwrap();
+    }
+    let revision = live.revision();
+    let EditOutcome::Playback { receipt, .. } = prepared.commit(&mut live, Instant::now).unwrap()
+    else {
+        panic!("not playback")
+    };
+    assert_eq!(
+        receipt.status,
+        Status::Completed,
+        "prepared brightness resurrected a completed effect"
+    );
+    assert_eq!(live.output(&id(2), &channel()), 128);
+    assert_eq!(live.revision(), revision.next().unwrap());
+    let restored = Installation::restore(live.document().as_bytes()).unwrap();
+    assert_eq!(restored.output(&id(2), &channel()), 128);
+}
+
+#[test]
+fn prepared_configuration_keeps_unaffected_progress() {
+    let mut live = installation();
+    let mut configuration = live.configuration().clone();
+    configuration.revision = Revision(2);
+    configuration.expected_previous = Some(Revision(1));
+    configuration.content.arrays.get_mut(&id(2)).unwrap().name = "renamed".into();
+    configuration.digest = configuration.content.digest().unwrap();
+    let prepared = live
+        .preparation(
+            Edit::Configuration {
+                configuration,
+                executions: BTreeMap::new(),
+            },
+            None,
+        )
+        .run()
+        .unwrap();
+    live.tick().unwrap();
+    live.tick().unwrap();
+    let before = live.output(&id(2), &channel());
+    prepared.commit(&mut live, Instant::now).unwrap();
+    assert_eq!(
+        live.output(&id(2), &channel()),
+        before,
+        "prepared configuration rewound an unaffected animation"
+    );
+    assert_eq!(live.configuration().content.arrays[&id(2)].name, "renamed");
+}
+
+#[test]
+fn prepared_commit_rechecks_the_original_deadline_without_mutation() {
+    let mut live = installation();
+    let deadline = Instant::now() + std::time::Duration::from_secs(5);
+    let prepared = live
+        .preparation(
+            Edit::Command {
+                array: id(2),
+                command: Command {
+                    revision: Revision(2),
+                    expected_playback: Revision(1),
+                    expected_execution: id(7),
+                    history: id(4),
+                    authority: id(5),
+                    generation: id(3),
+                    restart: false,
+                },
+                execution: id(8),
+            },
+            Some(deadline),
+        )
+        .run()
+        .unwrap();
+    live.tick().unwrap();
+    let before = live.document();
+    let output = live.output(&id(2), &channel());
+    assert!(
+        prepared.commit(&mut live, || deadline).is_err(),
+        "expired prepared edit committed"
+    );
+    assert_eq!(live.document(), before);
+    assert_eq!(live.output(&id(2), &channel()), output);
+}
+
+#[test]
+fn prepared_edit_is_retired_by_an_identical_replacement_installation() {
+    let live = installation();
+    let prepared = live
+        .preparation(
+            Edit::Command {
+                array: id(2),
+                command: Command {
+                    revision: Revision(2),
+                    expected_playback: Revision(1),
+                    expected_execution: id(7),
+                    history: id(4),
+                    authority: id(5),
+                    generation: id(3),
+                    restart: false,
+                },
+                execution: id(8),
+            },
+            None,
+        )
+        .run()
+        .unwrap();
+    let mut replacement = Installation::restore(live.document().as_bytes()).unwrap();
+    let document = replacement.document();
+    assert!(
+        prepared.commit(&mut replacement, Instant::now).is_err(),
+        "retired preparation crossed exact replacement"
+    );
+    assert_eq!(replacement.document(), document);
 }
 
 #[test]

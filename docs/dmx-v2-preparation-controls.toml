@@ -1,0 +1,91 @@
+[[control]]
+name = "prepared_restart_uses_old_planes"
+guard = "new execution starts from commit-time planes"
+file = "mqtt_dmx/src/ordered_array.rs"
+anchor = 'live.player.snapshot().held,'
+replacement = 'Vec::new(),'
+crate = "mqtt_dmx"
+target = "test:recovery_continuity"
+test = "prepared_restart_begins_at_the_live_commit_planes"
+expect_text = "prepared restart jumped back to preparation-time planes"
+
+[[control]]
+name = "prepared_stop_does_not_stop"
+guard = "Stop freezes rebased output"
+file = "mqtt_dmx/src/ordered_array.rs"
+anchor = 'Operation::Command(command) if !command.restart => self.player.stop(),'
+replacement = 'Operation::Command(command) if !command.restart => {},'
+crate = "mqtt_dmx"
+target = "test:recovery_continuity"
+test = "prepared_stop_freezes_the_commit_frame_and_not_the_preparation_frame"
+expect_text = "prepared stop froze an old frame"
+
+[[control]]
+name = "prepared_brightness_keeps_old_player"
+guard = "brightness preserves live completion"
+file = "mqtt_dmx/src/ordered_array.rs"
+anchor = '''} else {
+            self.player = live.player.clone();
+            match &self.last_operation {'''
+replacement = '''} else {
+            match &self.last_operation {'''
+crate = "mqtt_dmx"
+target = "test:recovery_continuity"
+test = "prepared_brightness_keeps_a_completion_that_happened_during_compilation"
+expect_text = "prepared brightness resurrected a completed effect"
+
+[[control]]
+name = "prepared_configuration_rewinds_unchanged_player"
+guard = "configuration preserves unaffected live progress"
+file = "mqtt_dmx/src/ordered_array.rs"
+anchor = '*self = live.clone();'
+replacement = 'let _ = live;'
+crate = "mqtt_dmx"
+target = "test:recovery_continuity"
+test = "prepared_configuration_keeps_unaffected_progress"
+expect_text = "prepared configuration rewound an unaffected animation"
+
+[[control]]
+name = "prepared_edit_crosses_replacement"
+guard = "preparation belongs to the current installation edit identity"
+file = "mqtt_dmx/src/installation/preparation.rs"
+anchor = 'if !Arc::ptr_eq(&self.base, &live.edit_epoch) {'
+replacement = 'if false {'
+crate = "mqtt_dmx"
+target = "test:recovery_continuity"
+test = "prepared_edit_is_retired_by_an_identical_replacement_installation"
+expect_text = "retired preparation crossed exact replacement"
+
+[[control]]
+name = "accepted_edit_does_not_retire_preparation"
+guard = "accepted playback rotates the edit identity"
+file = "mqtt_dmx/src/installation.rs"
+anchor = 'self.edit_epoch = Arc::new(());'
+replacement = 'self.edit_epoch = self.edit_epoch.clone();'
+crate = "mqtt_dmx"
+target = "test:recovery_continuity"
+test = "a_later_accepted_edit_retires_existing_preparation"
+expect_text = "accepted edit did not retire prior preparation"
+
+[[control]]
+name = "prepared_final_swap_ignores_expiry"
+guard = "original deadline checked after final admission before live swap"
+file = "mqtt_dmx/src/installation/preparation.rs"
+anchor = '''check_deadline(self.deadline, clock())?;
+        if let EditOutcome::Playback'''
+replacement = '''if let EditOutcome::Playback'''
+crate = "mqtt_dmx"
+target = "test:recovery_continuity"
+test = "prepared_commit_expiring_at_the_final_swap_preserves_live_state"
+expect_text = "prepared edit expired during final admission but committed"
+
+[[control]]
+name = "prepared_duplicate_is_recommitted"
+guard = "duplicate keeps original receipt and latest live document"
+file = "mqtt_dmx/src/installation/preparation.rs"
+anchor = 'if Arc::ptr_eq(&self.base, &self.candidate.edit_epoch) {'
+replacement = 'if false {'
+crate = "mqtt_dmx"
+target = "test:recovery_continuity"
+test = "a_prepared_duplicate_keeps_the_receipt_and_later_completed_state"
+expect_text = "duplicate lost its original receipt"

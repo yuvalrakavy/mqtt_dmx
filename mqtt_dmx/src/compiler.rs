@@ -7,6 +7,7 @@ use dmx_protocol::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
+#[derive(Clone)]
 pub struct CompiledConfiguration {
     configuration: Configuration,
     ownership: BTreeMap<Id, Vec<Channel>>,

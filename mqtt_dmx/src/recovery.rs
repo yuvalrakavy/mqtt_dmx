@@ -63,6 +63,17 @@ impl Snapshot {
     /// completion can produce. Frames therefore cannot exhaust the wire budget.
     pub fn encode_for_commit(&self) -> Result<String, Error> {
         let document = self.encode()?;
+        self.reserve_completion(document)
+    }
+    /// Only private Installation state reaches this path: configuration and
+    /// players were already compiled/validated at construction or admission.
+    /// Keep wire/memory/headroom checks, without recompiling every definition
+    /// on a completion tick or the owner's final swap.
+    pub(crate) fn encode_validated_for_commit(&self) -> Result<String, Error> {
+        crate::memory::reserve(self)?;
+        self.reserve_completion(self.canonical()?)
+    }
+    fn reserve_completion(&self, document: String) -> Result<String, Error> {
         let mut reserved = self.clone();
         reserved.revision = Revision(u64::MAX);
         let mut running = 0u64;

@@ -12,13 +12,19 @@ use std::{
     sync::Arc,
     time::Instant,
 };
+mod preparation;
+pub use preparation::{Edit, EditOutcome, Preparation, PreparedEdit};
 
+#[derive(Clone)]
 pub struct Installation {
     configuration: CompiledConfiguration,
     arrays: BTreeMap<Id, OrderedArray>,
     revision: Revision,
     document: Arc<str>,
     retired_ids: BTreeSet<Id>,
+    /// Process-local edit identity. Ticks/completions do not retire preparation;
+    /// accepted requests and replacement installations do.
+    edit_epoch: Arc<()>,
 }
 
 pub struct ConfigurationCommit {
@@ -74,11 +80,12 @@ impl Installation {
             revision: Revision(1),
             document: Arc::from(""),
             retired_ids: BTreeSet::new(),
+            edit_epoch: Arc::new(()),
         };
         installation.document = Arc::from(
             installation
                 .capture(None, installation.revision)?
-                .encode_for_commit()?,
+                .encode_validated_for_commit()?,
         );
         Ok(installation)
     }
@@ -90,10 +97,11 @@ impl Installation {
             revision: restored.revision,
             document: Arc::from(restored.document),
             retired_ids: restored.retired_ids,
+            edit_epoch: Arc::new(()),
         };
         installation
             .capture(None, installation.revision)?
-            .encode_for_commit()?;
+            .encode_validated_for_commit()?;
         Ok(installation)
     }
     pub fn document(&self) -> Arc<str> {
@@ -118,7 +126,10 @@ impl Installation {
         }
         if promoted {
             self.revision = std::cmp::max(self.revision, live.revision).next()?;
-            self.document = Arc::from(self.capture(None, self.revision)?.encode_for_commit()?);
+            self.document = Arc::from(
+                self.capture(None, self.revision)?
+                    .encode_validated_for_commit()?,
+            );
         }
         Ok(self)
     }
@@ -296,11 +307,12 @@ impl Installation {
             revision: self.revision.next()?,
             document: Arc::from(""),
             retired_ids,
+            edit_epoch: Arc::new(()),
         };
         candidate.document = Arc::from(
             candidate
                 .capture(None, candidate.revision)?
-                .encode_for_commit()?,
+                .encode_validated_for_commit()?,
         );
         check_deadline(deadline, clock())?;
         let revision = candidate.configuration().revision;
@@ -409,7 +421,9 @@ impl Installation {
         }
         if completed {
             let revision = self.revision.next()?;
-            let document = self.capture(None, revision)?.encode_for_commit()?;
+            let document = self
+                .capture(None, revision)?
+                .encode_validated_for_commit()?;
             self.document = Arc::from(document);
             self.revision = revision;
         }
@@ -457,9 +471,10 @@ impl Installation {
         let revision = self.revision.next()?;
         let document = self
             .capture(Some((id, &candidate)), revision)?
-            .encode_for_commit()?;
+            .encode_validated_for_commit()?;
         check_deadline(deadline, clock())?;
         self.arrays.insert(id.clone(), candidate);
+        self.edit_epoch = Arc::new(());
         self.revision = revision;
         self.document = Arc::from(document);
         Ok(receipt)

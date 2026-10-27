@@ -64,6 +64,41 @@ pub struct Checkpoint {
 }
 
 impl OrderedArray {
+    /// Rebase a validated edit on the owner's current frame. No label/default
+    /// resolution happens here. New executions start from the actual commit
+    /// planes; brightness and Stop preserve the intervening live progress.
+    pub(crate) fn rebase_prepared_from(&mut self, live: &Self, edited: bool) -> Result<(), Error> {
+        if !edited {
+            if self.owned == live.owned && self.playback == live.playback {
+                *self = live.clone();
+            }
+            return Ok(());
+        }
+        if self.owned != live.owned || self.playback.generation != live.playback.generation {
+            return Err(Error::Invalid("prepared playback mapping changed".into()));
+        }
+        if self.execution != live.execution {
+            self.player = Player::start(
+                self.owned.clone(),
+                self.player.effect().clone(),
+                live.player.snapshot().held,
+                self.playback.level,
+            )?;
+        } else {
+            self.player = live.player.clone();
+            match &self.last_operation {
+                Operation::Desired(_) => self.player.set_level(self.playback.level),
+                Operation::Command(command) if !command.restart => self.player.stop(),
+                Operation::Command(_) => {
+                    return Err(Error::Invalid(
+                        "prepared restart reused execution identity".into(),
+                    ))
+                }
+            }
+        }
+        self.last_receipt.status = self.player.status();
+        Ok(())
+    }
     /// Keep matching live progress, including a local completion newer than a
     /// broker's running image. Returns whether completion must be published.
     /// The selected broker cut keeps its operation ordering metadata.

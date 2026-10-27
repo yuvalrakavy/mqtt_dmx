@@ -53,18 +53,18 @@
   },
   "promotion_keeps_running_wire_snapshot": {
    "last_real": {
-    "at": "2026-10-27T11:04:58Z",
+    "at": "2026-10-27T11:20:12Z",
     "dirty": true,
     "expected": "RED",
     "fingerprints": {
-     "files": "files:1bfef7b1d61e7166",
-     "guard": "item:3df6cbd169eaeae0",
-     "row": "349cc098483c9135",
+     "files": "files:5446fd35bf023a4f",
+     "guard": "item:1b9cddab74c695c3",
+     "row": "f0c909fafbeecf7d",
      "test": "test:81fda95d82ae61ec"
     },
     "path": "cargo",
-    "secs": 2.7,
-    "sha": "cc9fbd3e6405e1681413ee3cb38a4750ac908e42",
+    "secs": 2.6,
+    "sha": "d69feb1571b262e5d68c8f66956aa36717d510ce",
     "verdict": "RED"
    }
   }
