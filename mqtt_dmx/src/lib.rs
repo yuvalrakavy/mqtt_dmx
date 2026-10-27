@@ -7,4 +7,5 @@ pub mod memory;
 pub mod ordered_array;
 pub mod output;
 pub mod recovery;
+pub mod recovery_selection;
 pub mod recovery_file;
