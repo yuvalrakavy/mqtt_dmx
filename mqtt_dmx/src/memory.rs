@@ -8,6 +8,7 @@
 use crate::{engine::Effect, recovery::Snapshot};
 use dmx_protocol::{Error, MAX_RECOVERY_BYTES};
 use serde_json::Value;
+mod meter;
 
 pub const MAX_ENGINE_RECOVERY_BYTES: usize = 16 * 1024 * 1024;
 pub const ENGINE_SLOTS: usize = 11;
@@ -60,8 +61,14 @@ fn runtime(effect: &Effect) -> usize {
 }
 
 pub(crate) fn reserve_player(effect: &Effect, owned: usize) -> Result<(), Error> {
-    let plan = serde_json::to_value(effect)?;
-    let slot = sum([decoded(&plan), runtime(effect), owned.saturating_mul(1024)]);
+    let fixed = sum([runtime(effect), owned.saturating_mul(1024)]);
+    if fixed > ENGINE_SLOT_BYTES {
+        return Err(Error::Invalid(
+            "player exceeds 16MiB aggregate engine/recovery admission slot".into(),
+        ));
+    }
+    let plan = meter::measure(effect, ENGINE_SLOT_BYTES - fixed)?;
+    let slot = sum([plan, fixed]);
     if slot > ENGINE_SLOT_BYTES {
         return Err(Error::Invalid(
             "player exceeds 16MiB aggregate engine/recovery admission slot".into(),
@@ -71,8 +78,7 @@ pub(crate) fn reserve_player(effect: &Effect, owned: usize) -> Result<(), Error>
 }
 
 pub fn reserve(snapshot: &Snapshot) -> Result<Reservation, Error> {
-    let representation = serde_json::to_value(snapshot)?;
-    let mut decoded_bytes = decoded(&representation);
+    let mut decoded_bytes = meter::measure(snapshot, ENGINE_SLOT_BYTES)?;
     // Authored maps survive as typed BTreeMaps in addition to their decoded
     // representation. Plain serialized struct fields do not need this charge.
     let content = &snapshot.configuration.content;

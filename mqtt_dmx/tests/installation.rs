@@ -59,6 +59,52 @@ fn installation() -> Installation {
 }
 
 #[test]
+fn expanded_wire_effect_is_refused_without_changing_live_installation() {
+    use dmx_protocol::configuration::{NamedEffect, Node, Ticks};
+    let mut configuration = config();
+    let array = configuration.content.arrays.get_mut(&id(2)).unwrap();
+    array.lights.insert(
+        "all".into(),
+        (1..=32)
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+            .join(","),
+    );
+    array.on = Some(id(9));
+    array.effects.insert(
+        id(9),
+        NamedEffect {
+            name: "expanded".into(),
+            description: String::new(),
+            definition: Node::Parallel {
+                nodes: (0..512)
+                    .map(|_| Node::Fade {
+                        lights: "@all".into(),
+                        ticks: Ticks::Number(100),
+                        target: "s(255)".into(),
+                        no_dimming: false,
+                    })
+                    .collect(),
+            },
+        },
+    );
+    configuration.digest = configuration.content.digest().unwrap();
+    let wire = configuration.encode().unwrap();
+    assert!(wire.len() < 48 * 1024);
+    let decoded = Configuration::decode(wire.as_bytes()).unwrap();
+    let mut live = Installation::initialize(decoded, BTreeMap::from([(id(2), id(6))])).unwrap();
+    let before = live.document();
+    let error = live
+        .desired(&id(2), request(1), id(7), None, Instant::now)
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("player exceeds 16MiB"),
+        "must reach player admission: {error}"
+    );
+    assert_eq!(live.document(), before);
+}
+
+#[test]
 fn decoded_configuration_expansion_is_refused_before_installation_changes() {
     let mut dense = config();
     dense.content.values = (0..8800)

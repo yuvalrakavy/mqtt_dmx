@@ -34,22 +34,21 @@ pub struct RestoredInstallation {
 
 impl Snapshot {
     pub fn encode(&self) -> Result<String, Error> {
-        let document = self.canonical()?;
         crate::memory::reserve(self)?;
+        let document = self.canonical()?;
         self.validate()?;
         Ok(document)
     }
     pub fn decode(bytes: &[u8]) -> Result<RestoredInstallation, Error> {
         let snapshot: Self = decode_strict(bytes, MAX_RECOVERY_BYTES)?;
+        crate::memory::reserve(&snapshot)?;
         let document = snapshot.canonical()?;
         if document.as_bytes() != bytes {
             return Err(Error::Invalid(
                 "recovery document must use canonical encoding".into(),
             ));
         }
-        // Reject decoded/runtime expansion before compiling configurations or
-        // reconstructing any players from an untrusted retained/fallback image.
-        crate::memory::reserve(&snapshot)?;
+        // Expansion admission already ran before canonical serialization above.
         let (configuration, arrays) = snapshot.validate()?;
         Ok(RestoredInstallation {
             configuration,
@@ -84,8 +83,8 @@ impl Snapshot {
                 "snapshot revision lacks completion headroom".into(),
             ));
         }
-        reserved.canonical()?;
         crate::memory::reserve(&reserved)?;
+        reserved.canonical()?;
         Ok(document)
     }
     fn canonical(&self) -> Result<String, Error> {

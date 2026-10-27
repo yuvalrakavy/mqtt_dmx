@@ -1,0 +1,10 @@
+[[control]]
+name = "streaming_counter_does_not_stop_at_limit"
+guard = "bounded serialization traversal before JSON allocation"
+file = "mqtt_dmx/src/memory/meter.rs"
+anchor = 'if self.used > self.limit {'
+replacement = 'if false {'
+crate = "mqtt_dmx"
+target = "lib"
+test = "memory::meter::tests::counting_stops_before_visiting_an_oversized_population"
+expect_text = "measure(&Population(&visited), 1024).is_err()"

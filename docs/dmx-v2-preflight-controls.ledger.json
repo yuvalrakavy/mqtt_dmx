@@ -1,0 +1,22 @@
+{
+ "rows": {
+  "streaming_counter_does_not_stop_at_limit": {
+   "last_real": {
+    "at": "2026-10-27T10:44:33Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:1cd2d0a8db4e7a52",
+     "guard": "item:0d0442399d2fdb1d",
+     "row": "2f96800fa2fedcca",
+     "test": "test:45a7d792ab1161d0"
+    },
+    "path": "cargo",
+    "secs": 3.3,
+    "sha": "04decdc0736907541127e73cb957d477ab8885d4",
+    "verdict": "RED"
+   }
+  }
+ },
+ "version": 1
+}
