@@ -1,0 +1,39 @@
+{
+ "rows": {
+  "different_execution_inherits_a_live_position": {
+   "last_real": {
+    "at": "2026-10-27T10:50:57Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:482dfd9fecf31d97",
+     "guard": "item:ecdbe32224c74d3a",
+     "row": "2ffdeb0bd0447855",
+     "test": "test:6e392e38c5ae6b77"
+    },
+    "path": "cargo",
+    "secs": 2.6,
+    "sha": "5c3adc04df9853adda1005596279927b872938ac",
+    "verdict": "RED"
+   }
+  },
+  "matching_execution_restarts_on_adoption": {
+   "last_real": {
+    "at": "2026-10-27T10:50:54Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:482dfd9fecf31d97",
+     "guard": "item:ecdbe32224c74d3a",
+     "row": "4e60d7c64cb45db7",
+     "test": "test:61edc4539e8485d7"
+    },
+    "path": "cargo",
+    "secs": 2.4,
+    "sha": "5c3adc04df9853adda1005596279927b872938ac",
+    "verdict": "RED"
+   }
+  }
+ },
+ "version": 1
+}

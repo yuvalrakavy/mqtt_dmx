@@ -99,6 +99,24 @@ impl Installation {
     pub fn document(&self) -> Arc<str> {
         self.document.clone()
     }
+    /// Prepare adoption of a validated broker cut without restarting identical
+    /// running executions. The caller decides whether automatic adoption is
+    /// permitted, then swaps this prepared value at its serialized commit.
+    pub fn preserve_running_from(mut self, live: &Self) -> Result<Self, Error> {
+        if self.configuration().history != live.configuration().history
+            || self.configuration().authority != live.configuration().authority
+        {
+            return Err(Error::Invalid(
+                "continuity requires matching history and authority".into(),
+            ));
+        }
+        for (id, selected) in &mut self.arrays {
+            if let Some(previous) = live.arrays.get(id) {
+                selected.preserve_running_from(previous)?;
+            }
+        }
+        Ok(self)
+    }
     pub fn revision(&self) -> Revision {
         self.revision
     }

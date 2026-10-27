@@ -25,7 +25,10 @@ regression passing independently; host workspace clippy with warnings denied pas
 The counter's guard-removal control failed as expected and was restored. The original
 allocation reproduction is not retained as an assertion about the obsolete path;
 the retained tests instead exercise bounded traversal and unchanged live state on
-refusal. Confirming review and integration evidence remain pending.
+refusal. Confirming review of frozen fix commit `5c3adc0` found no further issues.
+The reviewer also checked paired runtime fix `bbf8d83`; no independent engine suite
+rerun or different model-family coverage is claimed. Integration evidence remains
+pending.
 
 ## Recovery selection
 

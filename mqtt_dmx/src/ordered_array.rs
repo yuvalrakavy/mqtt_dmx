@@ -64,6 +64,27 @@ pub struct Checkpoint {
 }
 
 impl OrderedArray {
+    /// Copy only the live timeline; the selected broker cut keeps its ordering
+    /// metadata. Equality uses normalized start planes, not the current frame.
+    pub(crate) fn preserve_running_from(&mut self, live: &Self) -> Result<bool, Error> {
+        if self.owned != live.owned
+            || self.execution != live.execution
+            || self.player.status() != Status::Running
+            || live.player.status() != Status::Running
+            || self.playback.history != live.playback.history
+            || self.playback.authority != live.playback.authority
+            || self.playback.generation != live.playback.generation
+            || self.playback.level != live.playback.level
+            || self.playback.effect != live.playback.effect
+            || self.playback.off_effect != live.playback.off_effect
+            || self.playback.parameters != live.playback.parameters
+            || self.checkpoint()?.player != live.checkpoint()?.player
+        {
+            return Ok(false);
+        }
+        self.player = live.player.clone();
+        Ok(true)
+    }
     pub fn new(
         owned: Vec<Channel>,
         playback: Playback,

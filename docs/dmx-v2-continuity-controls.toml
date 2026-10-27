@@ -1,0 +1,21 @@
+[[control]]
+name = "matching_execution_restarts_on_adoption"
+guard = "matching running execution retains live player position"
+file = "mqtt_dmx/src/ordered_array.rs"
+anchor = 'self.player = live.player.clone();'
+replacement = 'let _ = live;'
+crate = "mqtt_dmx"
+target = "test:recovery_continuity"
+test = "matching_running_broker_cut_preserves_position_and_next_tick"
+expect_text = "adoption restarted a matching execution"
+
+[[control]]
+name = "different_execution_inherits_a_live_position"
+guard = "execution identity required for continuity"
+file = "mqtt_dmx/src/ordered_array.rs"
+anchor = '|| self.execution != live.execution'
+replacement = '|| false'
+crate = "mqtt_dmx"
+target = "test:recovery_continuity"
+test = "a_different_execution_cannot_inherit_the_live_position"
+expect_text = "different execution borrowed a live timeline"
