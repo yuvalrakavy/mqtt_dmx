@@ -495,6 +495,194 @@ fn rehash(c: &mut Configuration) {
 }
 
 #[test]
+fn bridge_publication_uses_resolved_ownership_and_retries_keep_the_running_timeline() {
+    let mut c = config();
+    c.content
+        .arrays
+        .get_mut(&id(2))
+        .unwrap()
+        .lights
+        .insert("all".into(), "1,2".into());
+    rehash(&mut c);
+    let mut live = Installation::initialize(c, [(id(2), id(6))].into()).unwrap();
+    live.desired(&id(2), request(1), id(7), None, Instant::now)
+        .unwrap();
+    live.tick().unwrap();
+    let mut publication = next_config(&live);
+    let array = publication.content.arrays.get_mut(&id(2)).unwrap();
+    array.lights.insert("all".into(), "2,1".into());
+    array.generation = id(90);
+    rehash(&mut publication);
+    live.publish(publication.clone(), None, Instant::now)
+        .unwrap();
+    assert_eq!(
+        live.configuration().content.arrays[&id(2)].generation,
+        id(3)
+    );
+    assert_eq!(live.receipt(&id(2)).unwrap().execution, id(7));
+    live.tick().unwrap();
+    assert_eq!(
+        live.output(&id(2), &channel()),
+        128,
+        "publish restarted the running animation"
+    );
+    let before_retry = live.document();
+    // A duplicate cannot choose a different authority, even when its placeholder
+    // deliberately aliases another object's UUID.
+    publication
+        .content
+        .arrays
+        .get_mut(&id(2))
+        .unwrap()
+        .generation = id(1);
+    rehash(&mut publication);
+    live.validate_configuration(&publication).unwrap();
+    live.publish(publication, None, Instant::now).unwrap();
+    assert_eq!(live.document(), before_retry);
+}
+
+#[test]
+fn bridge_publication_rotates_only_after_completed_off_and_retries_survive_restore() {
+    let mut live = installation();
+    live.desired(&id(2), request(1), id(7), None, Instant::now)
+        .unwrap();
+    let mut publication = next_config(&live);
+    let array = publication.content.arrays.get_mut(&id(2)).unwrap();
+    array.lights.insert("all".into(), "9".into());
+    rehash(&mut publication);
+    let before = live.document();
+    assert!(live
+        .publish(publication.clone(), None, Instant::now)
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("completed Off"));
+    assert_eq!(live.document(), before);
+    let mut off = request(2);
+    off.level = Level::OFF;
+    off.fade_ms = 0;
+    live.desired(&id(2), off, id(8), None, Instant::now)
+        .unwrap();
+    let commit = live
+        .publish(publication.clone(), None, Instant::now)
+        .unwrap();
+    assert_eq!(commit.released, vec![channel()]);
+    let assigned = live.configuration().content.arrays[&id(2)]
+        .generation
+        .clone();
+    assert_ne!(assigned, id(3));
+    let accepted = live.configuration();
+    assert_eq!(
+        accepted.publication_fingerprint().unwrap(),
+        publication.publication_fingerprint().unwrap()
+    );
+    let saved = live.document();
+    let mut restored = Installation::restore(saved.as_bytes()).unwrap();
+    restored
+        .publish(publication.clone(), None, Instant::now)
+        .unwrap();
+    assert_eq!(
+        restored.document(),
+        saved,
+        "retry after restore changed the accepted mapping or receipt"
+    );
+    publication
+        .content
+        .arrays
+        .get_mut(&id(2))
+        .unwrap()
+        .description = "different authored operation".into();
+    rehash(&mut publication);
+    assert!(restored
+        .publish(publication, None, Instant::now)
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("conflicting configuration"));
+    assert!(restored
+        .desired(&id(2), request(3), id(9), None, Instant::now)
+        .unwrap_err()
+        .to_string()
+        .contains("fenced"));
+    assert_eq!(restored.document(), saved);
+}
+
+#[test]
+fn bridge_publication_assigns_new_array_authority_without_resetting_existing_arrays() {
+    let mut live = installation();
+    live.desired(&id(2), request(1), id(7), None, Instant::now)
+        .unwrap();
+    let mut publication = next_config(&live);
+    let mut extra = publication.content.arrays[&id(2)].clone();
+    extra.name = "second".into();
+    extra.lights.insert("all".into(), "2".into());
+    publication.content.arrays.insert(id(9), extra);
+    rehash(&mut publication);
+    live.publish(publication, None, Instant::now).unwrap();
+    assert_eq!(live.receipt(&id(2)).unwrap().execution, id(7));
+    assert_eq!(
+        live.configuration().content.arrays[&id(2)].generation,
+        id(3)
+    );
+    assert_ne!(
+        live.configuration().content.arrays[&id(9)].generation,
+        id(3)
+    );
+    assert_eq!(live.receipt(&id(9)).unwrap().status, Status::Completed);
+}
+
+#[test]
+fn publication_identity_ignores_only_bridge_mapping_metadata() {
+    let original = config();
+    let fingerprint = original.publication_fingerprint().unwrap();
+    let mut changed = original.clone();
+    changed.content.arrays.get_mut(&id(2)).unwrap().generation = id(90);
+    rehash(&mut changed);
+    assert_eq!(changed.publication_fingerprint().unwrap(), fingerprint);
+    changed.digest = "0".repeat(64);
+    assert!(
+        changed.publication_fingerprint().is_err(),
+        "generation normalization bypassed digest validation"
+    );
+    for field in [
+        "name",
+        "channels",
+        "revision",
+        "authority",
+        "expected_previous",
+        "object_id",
+    ] {
+        let mut changed = original.clone();
+        match field {
+            "name" => changed.content.arrays.get_mut(&id(2)).unwrap().name = "renamed".into(),
+            "channels" => {
+                changed
+                    .content
+                    .arrays
+                    .get_mut(&id(2))
+                    .unwrap()
+                    .lights
+                    .insert("all".into(), "2".into());
+            }
+            "revision" => changed.revision = Revision(2),
+            "authority" => changed.authority = id(90),
+            "expected_previous" => changed.expected_previous = Some(Revision(0)),
+            "object_id" => {
+                let array = changed.content.arrays.remove(&id(2)).unwrap();
+                changed.content.arrays.insert(id(90), array);
+            }
+            _ => unreachable!(),
+        }
+        rehash(&mut changed);
+        assert_ne!(
+            changed.publication_fingerprint().unwrap(),
+            fingerprint,
+            "ignored authored field {field}"
+        );
+    }
+}
+
+#[test]
 fn definition_edit_and_rename_keep_running_timeline_and_execution() {
     let mut i = installation();
     let now = Instant::now();

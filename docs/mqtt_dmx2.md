@@ -31,6 +31,18 @@ Off, and returns a fresh accepted configuration/history/authority/generation tab
 Initialization is allowed only on an empty or faulted engine. Retained intent from
 before initialization cannot bypass the new identities.
 
+Publish definitions on `Config/{instance}/configuration` only when ready to apply
+them. Draft edits stay in Store. The bridge assigns each array's mapping generation
+from the resolved physical channels: existing mappings retain their generation and
+running execution; changed mappings receive fresh generations and require completed
+Off. New arrays start Off. Configuration request generations are compatibility
+placeholders, never authority chosen by the publisher.
+
+The accepted configuration in `State/{instance}/configuration` contains the assigned
+generations and its recalculated content digest. Publication comparison ignores only
+those generations and their derived digest; authored content and ordering still match
+exactly. Retrying the original publication, including after recovery, keeps the
+accepted mapping and execution IDs. Store uses the returned generations for playback.
 The configuration and playback formats are defined by `dmx_protocol`. Configuration
 uses `Config/<instance>/configuration`. Playback is one complete canonical JSON
 **string** on `Desired/<instance>/<array UUID>/playback`, with finite MQTT expiry and

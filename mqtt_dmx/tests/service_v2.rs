@@ -95,6 +95,79 @@ fn snapshot(endpoint: SocketAddr) -> String {
     live.document().to_string()
 }
 
+#[tokio::test]
+async fn published_definitions_get_bridge_owned_generations_without_restarting_playback() {
+    let output = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let document = snapshot(output.local_addr().unwrap());
+    let original = Installation::restore(document.as_bytes()).unwrap();
+    let broker = FakeBroker::start().await;
+    broker.retain(
+        "DMX/State/one/_recovery",
+        serde_json::to_vec(&serde_json::json!({"snapshot":document})).unwrap(),
+        &SendOptions::default(),
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let running = bridge()
+        .instance("one")
+        .broker(&broker.address())
+        .start_managed(DmxService::new(directory.path().join("startup.json")))
+        .await
+        .unwrap();
+    assert!(
+        broker
+            .wait_for_subscription("DMX/Desired/one/+/+", Duration::from_secs(3))
+            .await
+    );
+    let mut publication = original.configuration().clone();
+    publication.revision = Revision(2);
+    publication.expected_previous = Some(Revision(1));
+    let array = publication.content.arrays.get_mut(&id(2)).unwrap();
+    array.description = "Published label edit".into();
+    // A publisher's placeholder cannot rotate the live array's mapping authority.
+    array.generation = id(90);
+    publication.digest = publication.content.digest().unwrap();
+    assert!(broker.send_with(
+        "DMX/Config/one/configuration",
+        publication.encode().unwrap().into_bytes(),
+        &SendOptions::default()
+            .expiry(10)
+            .user_property("target-generation", &String::from(id(5)))
+    ));
+    assert!(
+        broker
+            .wait_until(Duration::from_secs(3), |b| b
+                .retained_on("DMX/State/one/configuration")
+                .is_some_and(|bytes| {
+                    let state: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                    let configuration =
+                        Configuration::decode(state["configuration"].as_str().unwrap().as_bytes())
+                            .unwrap();
+                    configuration.revision == Revision(2)
+                }))
+            .await,
+        "published definition was not accepted: {:?}",
+        broker.received_on("DMX/Error/one")
+    );
+    let state: serde_json::Value =
+        serde_json::from_slice(&broker.retained_on("DMX/State/one/configuration").unwrap())
+            .unwrap();
+    let accepted =
+        Configuration::decode(state["configuration"].as_str().unwrap().as_bytes()).unwrap();
+    assert_eq!(accepted.content.arrays[&id(2)].generation, id(3));
+    let array_state: serde_json::Value = serde_json::from_slice(
+        &broker
+            .retained_on(&format!("DMX/State/one/{}", String::from(id(2))))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        array_state["execution"],
+        String::from(id(7)),
+        "a definition-only publish restarted playback"
+    );
+    assert!(running.stop().await);
+}
+
 async fn reply(
     broker: &FakeBroker,
     body: serde_json::Value,

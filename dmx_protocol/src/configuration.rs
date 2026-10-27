@@ -97,6 +97,25 @@ impl Content {
 }
 
 impl Configuration {
+    /// Identity of one publication, independent of bridge-assigned mapping
+    /// generations and the digest derived from them. All authored and ordering
+    /// fields remain part of the identity. Validate the supplied digest first.
+    pub fn publication_fingerprint(&self) -> Result<String, Error> {
+        self.encode()?;
+        let mut value = serde_json::to_value(self)?;
+        value.as_object_mut().unwrap().remove("digest");
+        for array in value["content"]["arrays"]
+            .as_object_mut()
+            .unwrap()
+            .values_mut()
+        {
+            array.as_object_mut().unwrap().remove("generation");
+        }
+        Ok(sha256(
+            canonicalize_json(&serde_json::to_vec(&value)?, MAX_CONFIG_BYTES)?.as_bytes(),
+        ))
+    }
+
     pub fn encode(&self) -> Result<String, Error> {
         if self.schema != 1 || self.content.universes.len() > 32 || self.content.arrays.len() > 64 {
             return Err(Error::Invalid(

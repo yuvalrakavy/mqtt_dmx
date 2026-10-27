@@ -565,16 +565,7 @@ fn prepare_edit(request: Request, live: Option<&Installation>) -> tokio::task::J
                     let configuration =
                         dmx_protocol::configuration::Configuration::decode(document)
                             .map_err(rejected)?;
-                    let executions = configuration
-                        .content
-                        .arrays
-                        .keys()
-                        .map(|array| (array.clone(), id()))
-                        .collect();
-                    Edit::Configuration {
-                        configuration,
-                        executions,
-                    }
+                    Edit::Publication(configuration)
                 }
                 Action::Apply(scalar) => Edit::Desired {
                     array: request

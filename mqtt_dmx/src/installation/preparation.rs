@@ -3,6 +3,9 @@
 use super::*;
 
 pub enum Edit {
+    /// A wire publication. The bridge derives mapping authority from its own
+    /// resolved channels; the sender supplies no trusted mapping generation.
+    Publication(Configuration),
     Configuration {
         configuration: Configuration,
         executions: BTreeMap<Id, Id>,
@@ -56,6 +59,10 @@ impl Preparation {
     /// Run compilation/validation on the worker, never on the lighting loop.
     pub fn run(mut self) -> Result<PreparedEdit, Error> {
         let outcome = match self.edit {
+            Edit::Publication(configuration) => EditOutcome::Configuration(
+                self.candidate
+                    .publish(configuration, self.deadline, Instant::now)?,
+            ),
             Edit::Configuration {
                 configuration,
                 executions,

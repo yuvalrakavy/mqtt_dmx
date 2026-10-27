@@ -155,12 +155,12 @@ impl Installation {
                 "configuration history/authority is fenced".into(),
             ));
         }
-        let encoded = configuration.encode()?;
+        configuration.encode()?;
         if configuration.revision < current.revision {
             return Err(Error::Invalid("configuration superseded".into()));
         }
         if configuration.revision == current.revision {
-            if encoded != current.encode()? {
+            if configuration.publication_fingerprint()? != current.publication_fingerprint()? {
                 return Err(Error::Invalid(
                     "conflicting configuration at equal revision".into(),
                 ));
@@ -180,6 +180,45 @@ impl Installation {
             .iter()
             .flat_map(|(array, channels)| channels.iter().map(move |channel| (array, channel)))
     }
+
+    /// Accept a published definition using bridge-owned mapping generations.
+    /// Called on the preparation worker. Equal retries preserve all live state.
+    pub fn publish(
+        &mut self,
+        mut configuration: Configuration,
+        deadline: Option<Instant>,
+        clock: impl Fn() -> Instant,
+    ) -> Result<ConfigurationCommit, Error> {
+        check_deadline(deadline, clock())?;
+        self.validate_configuration(&configuration)?;
+        if configuration.revision == self.configuration().revision {
+            return self.configure(
+                self.configuration().clone(),
+                BTreeMap::new(),
+                deadline,
+                clock,
+            );
+        }
+        let fresh = || -> Id { uuid::Uuid::new_v4().to_string().try_into().unwrap() };
+        // Disregard caller tokens before compilation: even duplicate or retired
+        // placeholders cannot choose a mapping's authority or object identity.
+        for array in configuration.content.arrays.values_mut() {
+            array.generation = fresh();
+        }
+        configuration.digest = configuration.content.digest()?;
+        let resolved = CompiledConfiguration::compile(configuration.clone())?;
+        let mut executions = BTreeMap::new();
+        for (id, array) in &mut configuration.content.arrays {
+            if resolved.ownership().get(id) == self.configuration.ownership().get(id) {
+                array.generation = self.configuration.content().arrays[id].generation.clone();
+            } else {
+                executions.insert(id.clone(), fresh());
+            }
+        }
+        configuration.digest = configuration.content.digest()?;
+        self.configure(configuration, executions, deadline, clock)
+    }
+
     pub fn configure(
         &mut self,
         configuration: Configuration,
