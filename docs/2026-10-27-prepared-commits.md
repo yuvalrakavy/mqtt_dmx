@@ -27,5 +27,14 @@ six initial tests passed. Later regressions cover late expiry, intervening accep
 intent and duplicate completion. All sixteen continuity/preparation tests pass;
 full workspace 141/141, all-target host clippy and armv7 compile check pass. Eight
 new guard-removal controls and the one re-anchored completion capture control fail
-for their named assertions and are restored. Mutation/depth review is pending.
+for their named assertions and are restored.
+
+The mutation reviewer found two test gaps, with no production defect identified:
+unconditional live-array copying could discard remapped ownership/generation, and
+whole-array continuity copying could discard newer broker ordering metadata. The
+original 16-test suite stayed green under both mutants. Two retained public-API
+tests now detect them; the strengthened suite passes 18/18 independently and in the
+author tree. Both new author-run controls fail as expected (6.1 seconds total) and
+are restored. Configuration edit-identity rotation was also independently mutated
+and detected by an existing test. Depth review remains pending.
 This does not establish managed-service scheduling or MQTT acceptance.

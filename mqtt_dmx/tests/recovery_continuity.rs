@@ -714,3 +714,100 @@ fn a_different_execution_cannot_inherit_the_live_position() {
     );
     assert_eq!(selected.receipt(&id(2)).unwrap().execution, id(9));
 }
+
+#[test]
+fn prepared_configuration_keeps_remapped_and_new_array_state() {
+    let mut live = installation();
+    let snapshot: mqtt_dmx::recovery::Snapshot = serde_json::from_str(&live.document()).unwrap();
+    let mut off = Playback::decode(snapshot.arrays[&id(2)].playback.as_bytes()).unwrap();
+    off.revision = Revision(2);
+    off.level = Level::OFF;
+    off.fade_ms = 0;
+    live.desired(&id(2), off, id(8), None, Instant::now)
+        .unwrap();
+    assert_eq!(live.receipt(&id(2)).unwrap().status, Status::Completed);
+    let mut configuration = live.configuration().clone();
+    configuration.revision = Revision(2);
+    configuration.expected_previous = Some(Revision(1));
+    let remapped = configuration.content.arrays.get_mut(&id(2)).unwrap();
+    remapped.generation = id(9);
+    remapped.lights = [("all".into(), "2".into())].into();
+    let mut added = remapped.clone();
+    added.name = "added".into();
+    added.generation = id(11);
+    added.lights = [("all".into(), "3".into())].into();
+    configuration.content.arrays.insert(id(10), added);
+    configuration.digest = configuration.content.digest().unwrap();
+    let prepared = live
+        .preparation(
+            Edit::Configuration {
+                configuration,
+                executions: [(id(2), id(12)), (id(10), id(13))].into(),
+            },
+            None,
+        )
+        .run()
+        .unwrap();
+    live.tick().unwrap();
+    let EditOutcome::Configuration(commit) = prepared.commit(&mut live, Instant::now).unwrap()
+    else {
+        panic!("not configuration")
+    };
+    assert_eq!(commit.released, vec![channel()]);
+    let snapshot: mqtt_dmx::recovery::Snapshot = serde_json::from_str(&live.document()).unwrap();
+    for (array, generation, execution, revision) in [(2, 9, 12, 2), (10, 11, 13, 0)] {
+        let playback = Playback::decode(snapshot.arrays[&id(array)].playback.as_bytes()).unwrap();
+        assert_eq!(
+            playback.generation,
+            id(generation),
+            "configuration rebase replaced the prepared mapping with its retired mapping"
+        );
+        let receipt = live.receipt(&id(array)).unwrap();
+        assert_eq!(receipt.execution, id(execution));
+        assert_eq!(receipt.revision, Revision(revision));
+        assert_eq!(receipt.status, Status::Completed);
+    }
+    let restored = Installation::restore(live.document().as_bytes()).unwrap();
+    assert_eq!(restored.document(), live.document());
+    assert_eq!(restored.channels().count(), 2);
+}
+
+#[test]
+fn continuity_keeps_selected_broker_operation_and_cached_receipt() {
+    for complete in [false, true] {
+        let mut live = installation();
+        let mut broker = Installation::restore(live.document().as_bytes()).unwrap();
+        let snapshot: mqtt_dmx::recovery::Snapshot =
+            serde_json::from_str(&broker.document()).unwrap();
+        let mut request = Playback::decode(snapshot.arrays[&id(2)].playback.as_bytes()).unwrap();
+        request.revision = Revision(2);
+        request.fade_ms = 400;
+        let accepted = broker
+            .desired(&id(2), request.clone(), id(8), None, Instant::now)
+            .unwrap();
+        assert_eq!(accepted.execution, id(7));
+        assert_eq!(accepted.status, Status::Running);
+        for _ in 0..if complete { 4 } else { 2 } {
+            live.tick().unwrap();
+        }
+        let mut selected = broker.preserve_running_from(&live).unwrap();
+        assert_eq!(
+            selected.output(&id(2), &channel()),
+            live.output(&id(2), &channel())
+        );
+        assert_eq!(
+            selected.receipt(&id(2)).unwrap().revision,
+            Revision(2),
+            "continuity replaced the broker's accepted operation ordering"
+        );
+        assert_eq!(
+            selected
+                .desired(&id(2), request, id(9), None, Instant::now)
+                .unwrap(),
+            accepted,
+            "continuity replaced the selected broker's cached receipt"
+        );
+        let restored = Installation::restore(selected.document().as_bytes()).unwrap();
+        assert_eq!(restored.receipt(&id(2)).unwrap().revision, Revision(2));
+    }
+}

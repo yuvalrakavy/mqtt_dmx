@@ -1,0 +1,39 @@
+{
+ "rows": {
+  "configuration_rebase_ignores_mapping_change": {
+   "last_real": {
+    "at": "2026-10-27T11:33:18Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:1affe349e22ffd6e",
+     "guard": "item:b402db08e677f4e2",
+     "row": "000adfdfc1b1afbf",
+     "test": "test:bbad272159612c0f"
+    },
+    "path": "cargo",
+    "secs": 3.2,
+    "sha": "48fbdc3fb459113ed960073213c77508f3261907",
+    "verdict": "RED"
+   }
+  },
+  "continuity_replaces_broker_ordering_metadata": {
+   "last_real": {
+    "at": "2026-10-27T11:33:21Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:1affe349e22ffd6e",
+     "guard": "item:5ef5fa6cc1b61218",
+     "row": "34d633de3814db50",
+     "test": "test:e3521d99dccec292"
+    },
+    "path": "cargo",
+    "secs": 2.9,
+    "sha": "48fbdc3fb459113ed960073213c77508f3261907",
+    "verdict": "RED"
+   }
+  }
+ },
+ "version": 1
+}

@@ -1,0 +1,23 @@
+[[control]]
+name = "configuration_rebase_ignores_mapping_change"
+guard = "only unchanged mappings inherit live configuration progress"
+file = "mqtt_dmx/src/ordered_array.rs"
+anchor = 'if self.owned == live.owned && self.playback == live.playback {'
+replacement = 'if true {'
+crate = "mqtt_dmx"
+target = "test:recovery_continuity"
+test = "prepared_configuration_keeps_remapped_and_new_array_state"
+expect_text = "configuration rebase replaced the prepared mapping with its retired mapping"
+
+[[control]]
+name = "continuity_replaces_broker_ordering_metadata"
+guard = "only live player progress is inherited, not operation authority"
+file = "mqtt_dmx/src/ordered_array.rs"
+anchor = '''self.player = live.player.clone();
+        Ok(self.player.status() == Status::Completed)'''
+replacement = '''*self = live.clone();
+        Ok(self.player.status() == Status::Completed)'''
+crate = "mqtt_dmx"
+target = "test:recovery_continuity"
+test = "continuity_keeps_selected_broker_operation_and_cached_receipt"
+expect_text = "continuity replaced the broker's accepted operation ordering"
