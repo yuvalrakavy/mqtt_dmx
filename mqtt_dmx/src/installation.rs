@@ -99,9 +99,9 @@ impl Installation {
     pub fn document(&self) -> Arc<str> {
         self.document.clone()
     }
-    /// Prepare adoption of a validated broker cut without restarting identical
-    /// running executions. The caller decides whether automatic adoption is
-    /// permitted, then swaps this prepared value at its serialized commit.
+    /// Prepare broker adoption without restarting matching live executions.
+    /// Matching local completions keep their final planes and publish one cut
+    /// above both revisions. The owner decides whether adoption is permitted.
     pub fn preserve_running_from(mut self, live: &Self) -> Result<Self, Error> {
         if self.configuration().history != live.configuration().history
             || self.configuration().authority != live.configuration().authority
@@ -110,10 +110,15 @@ impl Installation {
                 "continuity requires matching history and authority".into(),
             ));
         }
+        let mut promoted = false;
         for (id, selected) in &mut self.arrays {
             if let Some(previous) = live.arrays.get(id) {
-                selected.preserve_running_from(previous)?;
+                promoted |= selected.preserve_running_from(previous)?;
             }
+        }
+        if promoted {
+            self.revision = std::cmp::max(self.revision, live.revision).next()?;
+            self.document = Arc::from(self.capture(None, self.revision)?.encode_for_commit()?);
         }
         Ok(self)
     }

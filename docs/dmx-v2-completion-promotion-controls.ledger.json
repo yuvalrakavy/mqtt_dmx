@@ -1,0 +1,73 @@
+{
+ "rows": {
+  "local_completion_is_not_preserved": {
+   "last_real": {
+    "at": "2026-10-27T11:04:49Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:756c54ced9740f01",
+     "guard": "item:5ef5fa6cc1b61218",
+     "row": "e0dbef4c90b316c1",
+     "test": "test:3e4268d2e747148f"
+    },
+    "path": "cargo",
+    "secs": 2.7,
+    "sha": "cc9fbd3e6405e1681413ee3cb38a4750ac908e42",
+    "verdict": "RED"
+   }
+  },
+  "promotion_advances_snapshot_revision_twice": {
+   "last_real": {
+    "at": "2026-10-27T11:04:55Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:1bfef7b1d61e7166",
+     "guard": "item:3df6cbd169eaeae0",
+     "row": "de78821503c3aa02",
+     "test": "test:3e4268d2e747148f"
+    },
+    "path": "cargo",
+    "secs": 2.7,
+    "sha": "cc9fbd3e6405e1681413ee3cb38a4750ac908e42",
+    "verdict": "RED"
+   }
+  },
+  "promotion_ignores_later_local_revisions": {
+   "last_real": {
+    "at": "2026-10-27T11:04:52Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:1bfef7b1d61e7166",
+     "guard": "item:3df6cbd169eaeae0",
+     "row": "33ecaa348912dbe4",
+     "test": "test:81fda95d82ae61ec"
+    },
+    "path": "cargo",
+    "secs": 2.7,
+    "sha": "cc9fbd3e6405e1681413ee3cb38a4750ac908e42",
+    "verdict": "RED"
+   }
+  },
+  "promotion_keeps_running_wire_snapshot": {
+   "last_real": {
+    "at": "2026-10-27T11:04:58Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:1bfef7b1d61e7166",
+     "guard": "item:3df6cbd169eaeae0",
+     "row": "349cc098483c9135",
+     "test": "test:81fda95d82ae61ec"
+    },
+    "path": "cargo",
+    "secs": 2.7,
+    "sha": "cc9fbd3e6405e1681413ee3cb38a4750ac908e42",
+    "verdict": "RED"
+   }
+  }
+ },
+ "version": 1
+}

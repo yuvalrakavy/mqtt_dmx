@@ -64,13 +64,14 @@ pub struct Checkpoint {
 }
 
 impl OrderedArray {
-    /// Copy only the live timeline; the selected broker cut keeps its ordering
-    /// metadata. Equality uses normalized start planes, not the current frame.
+    /// Keep matching live progress, including a local completion newer than a
+    /// broker's running image. Returns whether completion must be published.
+    /// The selected broker cut keeps its operation ordering metadata.
     pub(crate) fn preserve_running_from(&mut self, live: &Self) -> Result<bool, Error> {
         if self.owned != live.owned
             || self.execution != live.execution
             || self.player.status() != Status::Running
-            || live.player.status() != Status::Running
+            || !matches!(live.player.status(), Status::Running | Status::Completed)
             || self.playback.history != live.playback.history
             || self.playback.authority != live.playback.authority
             || self.playback.generation != live.playback.generation
@@ -78,12 +79,21 @@ impl OrderedArray {
             || self.playback.effect != live.playback.effect
             || self.playback.off_effect != live.playback.off_effect
             || self.playback.parameters != live.playback.parameters
-            || self.checkpoint()?.player != live.checkpoint()?.player
         {
             return Ok(false);
         }
+        let selected = self.checkpoint()?.player;
+        let mut original = live.checkpoint()?.player;
+        // Completion changes held planes/status, not the original execution.
+        // Normalize those fields solely for the continuity proof; the actual
+        // completed player and final planes are copied intact below.
+        original.status = Status::Running;
+        original.held = original.initial.clone();
+        if selected != original {
+            return Ok(false);
+        }
         self.player = live.player.clone();
-        Ok(true)
+        Ok(self.player.status() == Status::Completed)
     }
     pub fn new(
         owned: Vec<Channel>,

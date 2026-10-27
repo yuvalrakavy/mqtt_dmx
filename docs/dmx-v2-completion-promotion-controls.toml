@@ -1,0 +1,43 @@
+[[control]]
+name = "local_completion_is_not_preserved"
+guard = "matching locally completed execution remains completed"
+file = "mqtt_dmx/src/ordered_array.rs"
+anchor = '|| !matches!(live.player.status(), Status::Running | Status::Completed)'
+replacement = '|| live.player.status() != Status::Running'
+crate = "mqtt_dmx"
+target = "test:recovery_continuity"
+test = "locally_completed_execution_is_promoted_above_the_newer_broker_cut_once"
+expect_text = "newer broker cut restarted a locally completed matching execution"
+
+[[control]]
+name = "promotion_ignores_later_local_revisions"
+guard = "promoted snapshot revision exceeds both selected and local cuts"
+file = "mqtt_dmx/src/installation.rs"
+anchor = 'self.revision = std::cmp::max(self.revision, live.revision).next()?;'
+replacement = 'self.revision = self.revision.next()?;'
+crate = "mqtt_dmx"
+target = "test:recovery_continuity"
+test = "several_local_completions_publish_one_cut_above_both_revisions"
+expect_text = "multiple completions must publish one cut above both bases"
+
+[[control]]
+name = "promotion_advances_snapshot_revision_twice"
+guard = "one publication revision for the complete reconciled installation"
+file = "mqtt_dmx/src/installation.rs"
+anchor = 'self.revision = std::cmp::max(self.revision, live.revision).next()?;'
+replacement = 'self.revision = std::cmp::max(self.revision, live.revision).next()?.next()?;'
+crate = "mqtt_dmx"
+target = "test:recovery_continuity"
+test = "locally_completed_execution_is_promoted_above_the_newer_broker_cut_once"
+expect_text = "completion promotion did not advance the selected cut exactly once"
+
+[[control]]
+name = "promotion_keeps_running_wire_snapshot"
+guard = "promoted completion is captured in the authoritative wire document"
+file = "mqtt_dmx/src/installation.rs"
+anchor = 'self.document = Arc::from(self.capture(None, self.revision)?.encode_for_commit()?);'
+replacement = 'let _ = &self.document;'
+crate = "mqtt_dmx"
+target = "test:recovery_continuity"
+test = "several_local_completions_publish_one_cut_above_both_revisions"
+expect_text = 'assertion `left == right` failed'
