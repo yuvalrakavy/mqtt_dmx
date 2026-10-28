@@ -32,7 +32,9 @@ built = { version= "0.8.0", features = ["chrono"] }
 
 [dev-dependencies]
 mqtt-test-broker = { git = "https://github.com/yuvalrakavy/tracing-init.git", rev = "7d33a53" }
+wait-lint = { git = "https://github.com/yuvalrakavy/tracing-init.git", rev = "7d33a53" }
 tempfile = "3"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
 
 # to run with logging use
 #  RUST_LOG=trace,rumqttc=off mqtt_ac ...

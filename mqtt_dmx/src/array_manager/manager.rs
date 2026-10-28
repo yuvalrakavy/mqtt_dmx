@@ -137,6 +137,7 @@ impl ArrayManager {
         mut receiver: Receiver<ToArrayManagerMessage>,
     ) {
         loop {
+            // WAIT: array-loop
             select! {
                 _ = cancel.cancelled() => break,
 

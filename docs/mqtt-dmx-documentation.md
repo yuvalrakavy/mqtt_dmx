@@ -91,10 +91,12 @@ Inter-manager communication uses `tokio::sync::oneshot` channels for request/rep
 
 Each MQTT session:
 
-1. Connects to the broker
-2. Publishes `DMX/Active = "true"` (retained) and `DMX/Version` (retained)
-3. Sets last will: `DMX/Active = "false"` (retained)
-4. Subscribes to `DMX/#`
+1. Connects to the broker, with the last will `DMX/Active = "false"` (retained)
+2. Subscribes to `DMX/#`
+3. Publishes `DMX/Active = "true"` (retained), once it can hear its commands
+4. Republishes its retained model from its own state: `DMX/Version`, and `DMX/LastError` if it has
+   reported an error since it started — a broker restarted without its retained messages gets them
+   again
 5. Spawns publisher and subscriber tasks
 6. Waits for either task to fail, then shuts down both
 
@@ -102,7 +104,23 @@ If a session fails, the service waits 10 seconds and reconnects automatically. T
 
 ### Shutdown
 
-On `Ctrl+C`, all workers are shut down via `JoinSet::shutdown()`.
+SIGTERM (systemd's stop) or SIGINT (Ctrl+C) stops the service within 5 s — its tasks aborted, the
+config writer left to write what was saved — and then ends the runtime within 1 s more: a thread
+stuck in a synchronous call (a write to a stalled disk) is left behind rather than waited for. A stop
+during startup ends the startup at once, the logging's start included: it runs on a blocking thread
+raced against the stop (within 15 s; past that the bridge runs without a log). The bridge writes
+nothing to stdout or stderr itself once it runs — its lifecycle lines go through the log, whose
+writers drop lines rather than wait — so a supervisor's pipe that has stopped draining holds up
+neither its start nor its stop.
+
+### Saved configuration
+
+The configuration is saved to the storage directory as each config command is applied. The files are
+written by a writer task of their own, on a blocking thread, one write at a time, never by the task
+that handles commands: a stalled disk holds one write, later saves of a file replace the one still
+waiting, and commands go on. A write that takes over 5 s, or fails, is a WARN (`config_save_failed`,
+once per episode); a failed write's content is kept and tried again every 5 s until a save succeeds. At startup the files are read within 10 s; past that the bridge starts without them, and
+the broker's retained configs restore them when it subscribes.
 
 ---
 

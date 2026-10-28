@@ -38,9 +38,8 @@ fn v2_cli_names_the_binary_and_documents_the_actual_default_root() {
 
 #[tokio::test]
 async fn legacy_protocol_on_a_separate_broker_cannot_change_default_root_v2_output() {
-    // Exercise the v1 wire contract on its own broker. The preserved v1 binary
-    // takes a host on fixed port 1883, so this probe uses its MQTT identity and
-    // topics with an ephemeral port rather than touching an installed broker.
+    // Both versions use the default DMX root on separate ephemeral brokers.
+    // Legacy output is disabled; only v2 sends to the private loopback receiver.
     let legacy = FakeBroker::start_multi().await;
     let current = FakeBroker::start().await;
     let output = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -57,7 +56,33 @@ async fn legacy_protocol_on_a_separate_broker_cannot_change_default_root_v2_outp
         .start_managed(DmxService::new(directory.path().join("v2-startup.json")))
         .await
         .unwrap();
-    let options = rumqttc::v5::MqttOptions::new("DMX", "127.0.0.1", legacy.port());
+    let mut legacy_process = tokio::process::Command::new(env!("CARGO_BIN_EXE_mqtt_dmx"))
+        .arg(legacy.address())
+        .arg("--storage")
+        .arg(directory.path().join("v1-config"))
+        .current_dir(directory.path())
+        .env("LOG_DESTINATION", "c")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !legacy
+            .received_on("DMX/Active")
+            .iter()
+            .any(|p| p.payload == "true")
+        {
+            assert!(
+                legacy_process.try_wait().unwrap().is_none(),
+                "legacy process exited before connecting"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("legacy executable did not join its private broker");
+    let options = rumqttc::v5::MqttOptions::new("store-v1-probe", "127.0.0.1", legacy.port());
     let (client, mut eventloop) = rumqttc::v5::AsyncClient::new(options, 10);
     let pump = tokio::spawn(async move {
         loop {
@@ -66,7 +91,7 @@ async fn legacy_protocol_on_a_separate_broker_cannot_change_default_root_v2_outp
     });
     use rumqttc::v5::mqttbytes::QoS;
     client.subscribe("DMX/#", QoS::AtLeastOnce).await.unwrap();
-    for (topic, payload) in [("DMX/Active", "true"), ("DMX/Universe/one", "{\"description\":\"legacy\",\"controller\":\"127.0.0.1\",\"net\":0,\"subnet\":0,\"universe\":0,\"channels\":2,\"log\":false,\"disable_send\":true}"), ("DMX/Command/Set", "{\"universe_id\":\"one\",\"channels\":\"s:1\",\"target\":\"s(0)\",\"dimming_amount\":1000}")] {
+    for (topic, payload) in [("DMX/Universe/one", "{\"description\":\"legacy\",\"controller\":\"127.0.0.1\",\"net\":0,\"subnet\":0,\"universe\":0,\"channels\":2,\"log\":false,\"disable_send\":true}"), ("DMX/Command/Set", "{\"universe_id\":\"one\",\"channels\":\"s:1\",\"target\":\"s(0)\",\"dimming_amount\":1000}")] {
         client.publish(topic, QoS::AtLeastOnce, true, payload).await.unwrap();
     }
     tokio::time::timeout(Duration::from_secs(5), async {
@@ -102,7 +127,28 @@ async fn legacy_protocol_on_a_separate_broker_cannot_change_default_root_v2_outp
         .iter()
         .all(|p| !p.topic.starts_with("DMX/State/") && !p.topic.starts_with("DMX/Status/")));
     assert!(!directory.path().join("v2-startup.json").exists());
+    // A refused legacy command proves that the real v1 process is serving its
+    // own protocol while v2's output remains at the accepted value.
+    client
+        .publish(
+            "DMX/Command/Set",
+            QoS::AtLeastOnce,
+            false,
+            r#"{"universe_id":"absent","channels":"s:1","target":"s(0)","dimming_amount":1000}"#,
+        )
+        .await
+        .unwrap();
+    assert!(
+        legacy
+            .wait_until(Duration::from_secs(5), |b| !b
+                .received_on("DMX/Error")
+                .is_empty())
+            .await,
+        "legacy executable did not handle a command"
+    );
     assert!(running.stop().await);
+    legacy_process.kill().await.unwrap();
+    legacy_process.wait().await.unwrap();
     pump.abort();
     let _ = pump.await;
     for binary in [

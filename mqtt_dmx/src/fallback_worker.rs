@@ -76,10 +76,12 @@ impl Ticket {
             .take()
             .ok_or_else(|| Error::Unavailable("missing save task".into()))?;
         let result = if let Some(deadline) = self.job.deadline {
+            // WAIT: v2-save-deadline
             tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), task)
                 .await
                 .map_err(|_| Error::OutcomeUnknown)?
         } else {
+            // WAIT: v2-save-result
             task.await
         };
         let result = result.map_err(|e| Error::Unavailable(e.to_string()))?;
@@ -142,6 +144,7 @@ impl SaveWorker {
             deadline,
         });
         {
+            // WAIT: v2-save-metadata
             let mut active = self.inner.active.lock().unwrap_or_else(|p| p.into_inner());
             if self.inner.closed.load(Ordering::Acquire) {
                 return Err(Error::Closed);
@@ -160,6 +163,7 @@ impl SaveWorker {
             if !allowed(){return Err(Error::File(FileError::Interrupted{uncertain:false}));}
             let validated=Snapshot::decode(document.as_bytes())?;
             let revision=validated.revision;let digest=validated.digest.clone();drop(validated);
+            // WAIT: v2-save-sink
             let mut sink=_active.inner.sink.lock().map_err(|_|Error::Unavailable("fallback sink panicked; outcome unknown".into()))?;
             if !allowed(){return Err(Error::File(FileError::Interrupted{uncertain:false}));}
             tracing::info!(save_id=%String::from(save_id.clone()),snapshot_revision=revision.0,bytes=document.len(),"Saving startup fallback");
@@ -179,6 +183,7 @@ impl SaveWorker {
     pub fn overdue(&self, now: Instant, limit: Duration) -> bool {
         self.inner
             .active
+            // WAIT: v2-save-metadata
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .as_ref()
@@ -189,6 +194,7 @@ impl SaveWorker {
         if let Some(job) = self
             .inner
             .active
+            // WAIT: v2-save-metadata
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .as_ref()
@@ -198,6 +204,7 @@ impl SaveWorker {
     }
     pub async fn shutdown_until(&self, deadline: Instant) -> bool {
         self.close();
+        // WAIT: v2-save-shutdown
         tokio::time::timeout_at(
             tokio::time::Instant::from_std(deadline),
             self.inner.slots.acquire(),
@@ -219,6 +226,7 @@ impl Drop for Active {
     fn drop(&mut self) {
         self.inner
             .active
+            // WAIT: v2-save-metadata
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .take();

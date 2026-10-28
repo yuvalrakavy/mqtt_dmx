@@ -1,5 +1,5 @@
 use error_stack::{Report, ResultExt};
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 use rumqttc::v5::{AsyncClient, EventLoop, MqttOptions, mqttbytes::QoS, mqttbytes::v5::{LastWill, PublishProperties}};
 use std::{marker::PhantomData, path::PathBuf, sync::Arc};
 use thiserror::Error;
@@ -12,12 +12,37 @@ use crate::{
     artnet_manager::ArtnetManager,
     get_version,
     messages::{self, ToArtnetManagerMessage},
-    mqtt_publisher, mqtt_subscriber,
+    mqtt_outage::Outage,
+    mqtt_publisher::{self, LastError},
+    mqtt_pump::Pump,
+    mqtt_subscriber,
     persistence::Persistence,
 };
 
+/// The bridge's liveness: `true` while it is connected, `false` from its last will.
+const ACTIVE_TOPIC: &str = "DMX/Active";
+
+/// How long after a session ends the next one starts.
+const RECONNECT_AFTER: Duration = Duration::from_secs(10);
+
+/// How long stopping the service may wait for its tasks to end.
+const STOP_WITHIN: Duration = Duration::from_secs(5);
+
+/// How long the startup may wait for the saved configuration to be read.
+const LOAD_WITHIN: Duration = Duration::from_secs(10);
+
 pub struct Started {}
 pub struct Stopped {}
+
+/// What outlives every MQTT session: the broker's outage, which spans many, the last error
+/// report, which each connection republishes, and the service's stop, which the subscriber
+/// consults to tell a manager that stopped with the service from one that died.
+#[derive(Clone)]
+struct Lasting {
+    outage: Arc<Outage>,
+    last_error: LastError,
+    stopping: CancellationToken,
+}
 
 pub struct ServiceConfig {
     pub mqtt_broker_address: String,
@@ -28,6 +53,10 @@ pub struct Service<Status = Stopped> {
     config: ServiceConfig,
     cancel: Option<CancellationToken>,
     workers: JoinSet<()>,
+    /// The configuration's store, and its writer (`Persistence::write_saves`): apart from
+    /// `workers`, so the stop can let it write what was saved before it is aborted.
+    persistence: Option<Arc<Persistence>>,
+    writer: Option<tokio::task::JoinHandle<()>>,
     _status: PhantomData<Status>,
 }
 
@@ -67,24 +96,36 @@ impl Service {
             config,
             cancel: None,
             workers: JoinSet::new(),
+            persistence: None,
+            writer: None,
             _status: PhantomData,
         }
     }
 
-    async fn connect_to_mqtt_broker(
-        mqtt_broker: &str,
-    ) -> Result<(AsyncClient, EventLoop), Report<MqttError>> {
-        let into_context =
-            || MqttError::Context(format!("Connecting to MQTT broker {mqtt_broker}"));
-        let mut mqtt_options = MqttOptions::new("DMX", mqtt_broker, 1883);
-        let last_will_topic = "DMX/Active".to_string();
-        let version_topic = "DMX/Version".to_string();
-        let last_will = LastWill::new(&last_will_topic, "false", QoS::AtLeastOnce, true, None);
+    /// The client and its event loop. Nothing reaches the broker until the event loop is polled.
+    fn mqtt_client(mqtt_broker: &str) -> (AsyncClient, EventLoop) {
+        let (host, port) = broker_host_port(mqtt_broker);
+        let mut mqtt_options = MqttOptions::new("DMX", host, port);
+        let last_will = LastWill::new(ACTIVE_TOPIC, "false", QoS::AtLeastOnce, true, None);
         mqtt_options
             .set_keep_alive(Duration::from_secs(5))
             .set_last_will(last_will);
 
-        let (mqtt_client, event_loop) = AsyncClient::new(mqtt_options, 10);
+        AsyncClient::new(mqtt_options, 10)
+    }
+
+    /// Subscribes to the bridge's commands, says it is active once it can hear them, and then
+    /// republishes its retained model — its version and its last error report, from its own state
+    /// (no-hang F4, in the fleet's order: subscribe, `Active`, the model; Store 3b review round 3,
+    /// X4): every connection is a clean start, and a broker that restarted without its retained
+    /// messages gets them all again. Each waits on rumqttc's request channel, which the pump drains.
+    async fn announce(
+        mqtt_client: &AsyncClient,
+        mqtt_broker: &str,
+        last_error: &LastError,
+    ) -> Result<(), Report<MqttError>> {
+        let into_context =
+            || MqttError::Context(format!("Connecting to MQTT broker {mqtt_broker}"));
 
         // Build publish properties with current traceparent if a trace is active
         let props: Option<PublishProperties> = tracing_init::traceparent::current().map(|tp| {
@@ -93,38 +134,29 @@ impl Service {
             p
         });
 
-        // Publish active state
-        if let Some(p) = props.clone() {
-            mqtt_client
-                .publish_with_properties(&last_will_topic, QoS::AtLeastOnce, true, "true", p)
-                .await
-                .change_context_lazy(into_context)?;
-        } else {
-            mqtt_client
-                .publish(&last_will_topic, QoS::AtLeastOnce, true, "true")
-                .await
-                .change_context_lazy(into_context)?;
-        }
-        if let Some(p) = props {
-            mqtt_client
-                .publish_with_properties(&version_topic, QoS::AtLeastOnce, true, get_version(), p)
-                .await
-                .change_context_lazy(into_context)?;
-        } else {
-            mqtt_client
-                .publish(&version_topic, QoS::AtLeastOnce, true, get_version())
-                .await
-                .change_context_lazy(into_context)?;
-        }
-
         // Subscribe to commands
+        // WAIT: mqtt-request
         mqtt_client
             .subscribe("DMX/#".to_string(), QoS::AtLeastOnce)
             .await
             .change_context_lazy(into_context)?;
-        Ok((mqtt_client, event_loop))
+
+        publish_retained(mqtt_client, ACTIVE_TOPIC, b"true".to_vec(), &props)
+            .await
+            .change_context_lazy(into_context)?;
+        publish_retained(mqtt_client, "DMX/Version", get_version().into_bytes(), &props)
+            .await
+            .change_context_lazy(into_context)?;
+        if let Some(report) = last_error.get() {
+            publish_retained(mqtt_client, "DMX/LastError", report, &props)
+                .await
+                .change_context_lazy(into_context)?;
+        }
+        Ok(())
     }
 
+    /// One connection: the pump polls, the publisher publishes error reports, the subscriber
+    /// handles commands. No task here polls and waits on anything else (no-hang §14.3).
     async fn mqtt_session(
         broker_address: &str,
         to_artnet_tx: Sender<ToArtnetManagerMessage>,
@@ -132,31 +164,40 @@ impl Service {
         to_mqtt_publisher_rx: async_channel::Receiver<messages::ToMqttPublisherMessage>,
         to_mqtt_publisher_tx: async_channel::Sender<messages::ToMqttPublisherMessage>,
         persistence: Arc<Persistence>,
+        lasting: Lasting,
     ) -> Result<(), Report<MqttError>> {
+        let Lasting { outage, last_error, stopping } = lasting;
+        let (mqtt_client, mqtt_event_loop) = Service::mqtt_client(broker_address);
+        // Polling first, so every publish below has an event loop draining it.
+        let (_pump, incoming) = Pump::start(mqtt_event_loop, outage);
+        Service::announce(&mqtt_client, broker_address, &last_error).await?;
+
         let mut mqtt_workers = JoinSet::new();
-
-        let (mqtt_client, mqtt_event_loop) =
-            Service::connect_to_mqtt_broker(broker_address).await?;
-
         mqtt_workers.spawn(async move {
-            let e = mqtt_publisher::session(mqtt_client, to_mqtt_publisher_rx).await;
+            let e = mqtt_publisher::session(mqtt_client, to_mqtt_publisher_rx, last_error).await;
             info!("MQTT publisher session ended: {:?}", e)
         });
 
         mqtt_workers.spawn(async move {
             let e = mqtt_subscriber::session(
-                mqtt_event_loop,
+                incoming,
                 to_artnet_tx,
                 to_array_tx,
                 to_mqtt_publisher_tx,
                 persistence,
+                stopping,
             )
             .await;
             info!("MQTT subscriber session ended: {:?}", e)
         });
 
-        let _ = mqtt_workers.join_next().await; // Wait until either the publisher or the subscriber fails
-        let _ = mqtt_workers.shutdown().await; // Shutdown the other worker
+        // Until either the publisher or the subscriber ends. A failed connection ends both: the
+        // pump hands the subscriber `Ended` and drops the event loop, so a publish waiting on the
+        // request channel fails.
+        // WAIT: mqtt-workers
+        let _ = mqtt_workers.join_next().await;
+        // WAIT: task-shutdown
+        mqtt_workers.shutdown().await;
 
         Ok(())
     }
@@ -168,7 +209,9 @@ impl Service {
         to_mqtt_publisher_rx: async_channel::Receiver<messages::ToMqttPublisherMessage>,
         to_mqtt_publisher_tx: async_channel::Sender<messages::ToMqttPublisherMessage>,
         persistence: Arc<Persistence>,
+        stopping: CancellationToken,
     ) {
+        let lasting = Lasting { outage: Arc::new(Outage::new()), last_error: LastError::default(), stopping };
         loop {
             let _ = Self::mqtt_session(
                     broker_address,
@@ -177,11 +220,12 @@ impl Service {
                     to_mqtt_publisher_rx.clone(),
                     to_mqtt_publisher_tx.clone(),
                     persistence.clone(),
+                    lasting.clone(),
                 )
                 .await;
 
-            info!(kind = "connection_lost", "MQTT session ended, restarting in 10 seconds");
-            tokio::time::sleep(Duration::from_secs(10)).await;
+            lasting.outage.session_ended(RECONNECT_AFTER);
+            tokio::time::sleep(RECONNECT_AFTER).await;
         }
     }
 }
@@ -200,13 +244,13 @@ impl Service<Stopped> {
 
         let to_mqtt_publisher_tx_instance = to_mqtt_publisher_tx.clone();
 
-        // Create Artnet manager worker
+        // Create Artnet manager worker. The managers' loops are called by path: the wait lint
+        // takes a method named `run` for a dependency's.
         let cancel_instance = cancel.clone();
         self.workers.spawn(async move {
             let mut artnet_manager = ArtnetManager::new();
 
-            artnet_manager
-                .run(cancel_instance, to_artnet_rx, to_mqtt_publisher_tx_instance)
+            ArtnetManager::run(&mut artnet_manager, cancel_instance, to_artnet_rx, to_mqtt_publisher_tx_instance)
                 .await;
         });
 
@@ -216,24 +260,26 @@ impl Service<Stopped> {
         self.workers.spawn(async move {
             let mut array_manager = array_manager::ArrayManager::new();
 
-            array_manager.run(cancel_instance, to_array_rx).await;
+            array_manager::ArrayManager::run(&mut array_manager, cancel_instance, to_array_rx).await;
         });
 
+        // Off the async workers, and bounded: a stalled disk costs the saved configuration, which
+        // the broker's retained configs restore, never the startup (no-hang F1).
         let persistence = Arc::new(Persistence::new(self.config.storage_path.clone()));
-        if let Err(e) = persistence.ensure_directory() {
-            warn!(kind = "external_failure", path = %self.config.storage_path.display(),
-                  error = %e, "failed to create storage directory");
-        }
+        // WAIT: persistence-load
+        let persisted = persistence.load(LOAD_WITHIN).await;
+        self.writer = Some(tokio::spawn(Persistence::write_saves(persistence.clone())));
+        self.persistence = Some(persistence.clone());
 
         // Clone channel senders for replaying persisted state
         let to_artnet_tx_replay = to_artnet_tx.clone();
         let to_array_tx_replay = to_array_tx.clone();
 
-        // Load persisted state and replay through channels
-        let persisted_universes = persistence.load_universes();
-        let persisted_arrays = persistence.load_arrays();
-        let persisted_effects = persistence.load_effects();
-        let persisted_values = persistence.load_values();
+        // Replay the persisted state through the channels
+        let persisted_universes = persisted.universes;
+        let persisted_arrays = persisted.arrays;
+        let persisted_effects = persisted.effects;
+        let persisted_values = persisted.values;
 
         info!(
             "Loaded persisted configuration from {}: {} universes, {} arrays, {} effects, {} values",
@@ -246,6 +292,7 @@ impl Service<Stopped> {
 
         for (universe_id, definition) in persisted_universes {
             let (tx, rx) = tokio::sync::oneshot::channel();
+            // WAIT: artnet-queue
             if to_artnet_tx_replay
                 .send(ToArtnetManagerMessage::AddUniverse(
                     universe_id.clone(),
@@ -255,15 +302,18 @@ impl Service<Stopped> {
                 .await
                 .is_ok()
             {
+                // WAIT: artnet-reply
                 if let Ok(Err(e)) = rx.await {
-                    error!(kind = "decode_error", universe_id = %universe_id, error = ?e,
-                           "failed to restore persisted universe");
+                    // The file was read and parsed; what it says was refused (logging policy).
+                    warn!(kind = "command_rejected", universe_id = %universe_id, error = ?e,
+                          "failed to restore persisted universe: refused");
                 }
             }
         }
 
         for (array_id, definition) in persisted_arrays {
             let (tx, rx) = tokio::sync::oneshot::channel();
+            // WAIT: array-queue
             if to_array_tx_replay
                 .send(messages::ToArrayManagerMessage::AddArray(
                     array_id.clone(),
@@ -273,15 +323,18 @@ impl Service<Stopped> {
                 .await
                 .is_ok()
             {
+                // WAIT: array-reply
                 if let Ok(Err(e)) = rx.await {
-                    error!(kind = "decode_error", array_id = %array_id, error = ?e,
-                           "failed to restore persisted array");
+                    // The file was read and parsed; what it says was refused (logging policy).
+                    warn!(kind = "command_rejected", array_id = %array_id, error = ?e,
+                          "failed to restore persisted array: refused");
                 }
             }
         }
 
         for (effect_id, definition) in persisted_effects {
             let (tx, rx) = tokio::sync::oneshot::channel();
+            // WAIT: array-queue
             if to_array_tx_replay
                 .send(messages::ToArrayManagerMessage::AddEffect(
                     effect_id.clone(),
@@ -291,15 +344,18 @@ impl Service<Stopped> {
                 .await
                 .is_ok()
             {
+                // WAIT: array-reply
                 if let Ok(Err(e)) = rx.await {
-                    error!(kind = "decode_error", effect_id = %effect_id, error = ?e,
-                           "failed to restore persisted effect");
+                    // The file was read and parsed; what it says was refused (logging policy).
+                    warn!(kind = "command_rejected", effect_id = %effect_id, error = ?e,
+                          "failed to restore persisted effect: refused");
                 }
             }
         }
 
         for (value_name, value) in persisted_values {
             let (tx, rx) = tokio::sync::oneshot::channel();
+            // WAIT: array-queue
             if to_array_tx_replay
                 .send(messages::ToArrayManagerMessage::AddGlobalValue(
                     value_name.clone(),
@@ -309,14 +365,17 @@ impl Service<Stopped> {
                 .await
                 .is_ok()
             {
+                // WAIT: array-reply
                 if let Ok(Err(e)) = rx.await {
-                    error!(kind = "decode_error", value_name = %value_name, error = ?e,
-                           "failed to restore persisted value");
+                    // The file was read and parsed; what it says was refused (logging policy).
+                    warn!(kind = "command_rejected", value_name = %value_name, error = ?e,
+                          "failed to restore persisted value: refused");
                 }
             }
         }
 
         let broker_address = self.config.mqtt_broker_address.clone();
+        let cancel_mqtt = cancel.clone();
 
         self.workers.spawn(async move {
             Self::mqtt(
@@ -326,6 +385,7 @@ impl Service<Stopped> {
                 to_mqtt_publisher_rx,
                 to_mqtt_publisher_tx,
                 persistence,
+                cancel_mqtt,
             )
             .await;
         });
@@ -335,24 +395,93 @@ impl Service<Stopped> {
             config: self.config,
             cancel: Some(cancel),
             workers: self.workers,
+            persistence: self.persistence,
+            writer: self.writer,
             _status: PhantomData,
         }
     }
 }
 
 impl Service<Started> {
-    pub async fn stop(mut self) -> Service<Stopped> {
+    pub async fn stop(self) -> Service<Stopped> {
+        self.stop_within(STOP_WITHIN).await
+    }
+
+    /// Cancels and aborts every task, lets the writer write what was saved, and waits at most
+    /// `bound` for all of it. A task inside a synchronous call cannot be aborted until it
+    /// returns, and a write on a stalled disk does not return: past the bound they are left
+    /// behind, with a WARN, and the stop goes on (`main` then ends the runtime within its own
+    /// bound, without them).
+    async fn stop_within(mut self, bound: Duration) -> Service<Stopped> {
         if let Some(cancel) = self.cancel.take() {
             cancel.cancel();
         }
-        self.workers.shutdown().await;
+        let workers = &mut self.workers;
+        let persistence = self.persistence.take();
+        let writer = &mut self.writer;
+        let stop = async move {
+            // No more saves once the MQTT session is gone.
+            // WAIT: task-shutdown
+            workers.shutdown().await;
+            if let Some(persistence) = persistence {
+                persistence.close();
+            }
+            if let Some(writer) = writer.as_mut() {
+                // WAIT: writer-end
+                let _ = writer.await;
+            }
+        };
+        // WAIT: service-stop
+        if tokio::time::timeout(bound, stop).await.is_err() {
+            let writing = self.writer.as_ref().is_some_and(|w| !w.is_finished());
+            warn!(kind = "shutdown_timeout", bound_ms = bound.as_millis() as u64, tasks = self.workers.len(), writing,
+                  "Service stop timed out: a task or a config write did not end; stopping without it");
+        }
+        if let Some(writer) = self.writer.take() {
+            writer.abort();
+        }
         info!("Service stopped");
 
         Service {
             config: self.config,
             cancel: None,
             workers: self.workers,
+            persistence: None,
+            writer: None,
             _status: PhantomData,
         }
     }
 }
+
+/// Publishes `payload` on `topic`, retained, with `props` if a trace is active.
+async fn publish_retained(
+    mqtt_client: &AsyncClient,
+    topic: &str,
+    payload: Vec<u8>,
+    props: &Option<PublishProperties>,
+) -> Result<(), Box<rumqttc::v5::ClientError>> {
+    match props {
+        Some(p) => {
+            // WAIT: mqtt-request
+            mqtt_client.publish_with_properties(topic, QoS::AtLeastOnce, true, payload, p.clone()).await
+        }
+        None => {
+            // WAIT: mqtt-request
+            mqtt_client.publish(topic, QoS::AtLeastOnce, true, payload).await
+        }
+    }.map_err(Box::new)
+}
+
+/// `host` or `host:port` (default 1883).
+fn broker_host_port(broker: &str) -> (&str, u16) {
+    match broker.rsplit_once(':') {
+        Some((host, port)) if !host.is_empty() => match port.parse() {
+            Ok(port) => (host, port),
+            Err(_) => (broker, 1883),
+        },
+        _ => (broker, 1883),
+    }
+}
+
+#[cfg(test)]
+mod tests;

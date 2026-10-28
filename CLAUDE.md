@@ -1,10 +1,35 @@
 # mqtt_dmx
 
-Two crates: `mqtt_dmx/` (the bridge — cross-compiled for Raspberry Pi armv7 by default via `.cargo/config.toml`) and `artnet_emulator/` (a dev-machine Dioxus UI emulator of the ArtNet bus side, targeting aarch64-apple-darwin). The bridge subscribes to MQTT topics under `DMX/#`, dispatches lighting commands to ArtNet universes and DMX arrays, and re-publishes state via `DMX/Active`, `DMX/Version`, and `DMX/LastError`/`DMX/Error`.
+The workspace contains `mqtt_dmx/` (both bridge binaries) and `dmx_protocol/`
+(the shared v2 codecs). `artnet_emulator/` is a separate dev-machine Dioxus UI.
+The default build target is Raspberry Pi armv7; select the host target for local tests.
+
+`mqtt_dmx2` uses BridgeKit with a required `--instance`, optional `--root` (default
+`DMX`) and an explicitly saved `--startup-fallback`. Its MQTT contract differs from
+legacy `mqtt_dmx`; use separate brokers and service/file paths. See
+[the v2 guide](docs/mqtt_dmx2.md). The original legacy version remains tagged
+`legacy-v1`; current legacy hardening is preserved alongside v2.
+
+Legacy `mqtt_dmx` subscribes to `DMX/#`, dispatches commands to Art-Net universes
+and arrays, and publishes Active/Version/Error. Its broker argument accepts
+`host` or `host:port` (default 1883).
+
+## Build and test
+
+Tests use in-process private brokers (`mqtt-test-broker`), never the installed broker. Legacy tests disable physical sends; v2 output tests send only to owned ephemeral loopback receivers. The coexistence test runs the actual legacy executable beside the v2 service on separate brokers.
+
+```bash
+cargo nextest run --workspace --target aarch64-apple-darwin
+cargo clippy --workspace --target aarch64-apple-darwin --all-targets -- -D warnings
+```
+
+## Legacy MQTT loop (Store no-hang §14.3)
+
+rumqttc's request channel drains only while its event loop is polled, so the task that polls waits on nothing else. `Pump` (`mqtt_pump.rs`) polls and forwards incoming publishes on an unbounded queue (a WARN with `kind = "mqtt_backlog_high"` past 1000 unread, an INFO when it drains; what is still queued when a session ends is discarded and counted in a WARN, `kind = "mqtt_commands_discarded"`); the subscriber handles them, the publisher publishes error reports, and the ArtNet manager hands its own error reports over without waiting (`Reporter`: with the queue full, the newest displaces the oldest — one WARN per episode, `kind = "error_report_dropped"`, and an INFO with the total once it drains). Every wait carries a `// WAIT: <row>` tag naming a row of `mqtt_dmx/docs/wait-registry.md`, which `tests/wait_registry.rs` checks (a tag sits on its own line above its statement: rustfmt moves a trailing one); the negative controls are `mqtt_dmx/docs/no-hang-3b-controls.toml`. SIGTERM (systemd's stop) and SIGINT stop the bridge through a bounded `Service::stop` (5 s, then a `shutdown_timeout` WARN); `main` builds its runtime and ends it with `shutdown_timeout` (1 s), since dropping a runtime waits without limit for a thread stuck in a synchronous call; and the log is flushed before it exits (`tests/process.rs` runs the binary to check, a stalled disk included). The logging's start runs on a blocking thread raced against the stop (within 15 s, then the bridge runs without a log; in debug builds the test seam `MQTT_DMX_TEST_LOGGING_GATE` names a file the start reads first, so a test can hold it), and once it runs the bridge never writes to stdout or stderr itself: lifecycle lines go through the log, whose writers drop lines rather than wait (the only prints are rustop's usage and argument errors, a runtime that cannot be built — both before any stop handler — and the "logging did not start" line inside the raced start). Nothing on an async worker touches the filesystem: the startup's config read runs on a blocking thread within 10 s, and saves are posted to a writer task (`Persistence::write_saves`), latest per file, so a stalled disk holds one write and never the commands; a failed write's content is kept and retried every 5 s.
 
 ## Logging
 
 Log levels follow the fleet policy at `~/Documents/Projects/Store/docs/guides/logging-policy.md`:
-ERROR = a code change is warranted; WARN = someone must eventually act (zero per hour at idle) and always carries `kind = "<family>"`; INFO = lifecycle / designed degradations; per-frame DMX traffic → TRACE. External outages (broker down, ArtNet node unreachable) are `kind = "external_failure"` at WARN, never ERROR. The portable-core reference is the `logging-policy` user-level skill.
+ERROR = a code change is warranted; WARN = someone must eventually act (zero per hour at idle) and always carries `kind = "<family>"`; INFO = lifecycle / designed degradations; per-frame DMX traffic → TRACE. A failed command is logged once, where it failed: input that does not parse is INFO `validation_rejected`; one the ArtNet or array manager refuses (an array nobody defined, an effect that fails at its tick, a saved config refused on restore) is WARN `command_rejected`; one whose manager has died mid-run is ERROR `worker_died`. The publisher reports it on `DMX/Error` without a log line of its own. External outages are episodes, never ERROR: ArtNet sends that fail are INFO `device_connection_lost`, DEBUG after, one WARN `device_unreachable` past 30 s and INFO `device_recovered` when a packet goes out again; a saved file that cannot be read at startup is WARN `config_load_failed`. A broker outage (`mqtt_outage.rs`, which outlives sessions) is one episode: an INFO (`kind = "connection_lost"`) at its first failed attempt, DEBUG for the later ones, one WARN (`external_failure`, with `attempts` and `down_for_ms`) once it has lasted 30 s, and an INFO (`kind = "external_recovered"`, `down_for_ms`, `attempts`) when a connection proves itself by lasting 20 s — a CONNACK alone is not a recovery, so a broker that takes the connection and drops it stays one outage. A stop signal whose handler cannot be registered is a WARN (`signal_handler_unavailable`); config save failures are one WARN per episode (`config_save_failed`) and an INFO when saves work again (`config_save_recovered`). The portable-core reference is the `logging-policy` user-level skill.
 
-The bridge joins distributed traces via MQTT v5 `traceparent` user properties: inbound `Publish` packets are checked for a `traceparent` property and the handler span is re-parented before entering; outbound publishes (Active, Version, Error) stamp the current traceparent when a trace is active. The helpers live in `tracing_init::traceparent` (behind the `otel` feature). GELF and OTLP destinations are deploy-time config (env vars `LOG_DESTINATION`, `LOG_SERVER` or a `logging.toml` file).
+The bridge joins distributed traces via MQTT v5 `traceparent` user properties: inbound `Publish` packets are checked for a `traceparent` property and the handler span is re-parented before entering; outbound publishes (Active, Version, Error) stamp the current traceparent when a trace is active. The helpers live in `tracing_init::traceparent` (behind the `otel` feature). GELF and OTLP destinations are deploy-time config (env vars `LOG_DESTINATION`, `LOG_SERVER` or a `logging.toml` file, found by an upward search from the working directory — on the Pi, `/home/yuval/logging.toml`, per `dmx_TLV.service`). `on_destination_error = skip` is pinned in code: no log destination can stop the bridge.

@@ -834,7 +834,9 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-init",
+ "tracing-subscriber",
  "uuid",
+ "wait-lint",
 ]
 
 [[package]]
@@ -1933,6 +1935,15 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "wait-lint"
+version = "0.1.0"
+source = "git+https://github.com/yuvalrakavy/tracing-init.git?rev=7d33a53#7d33a53407adb9557fbc4253c6ad7756fb1a6079"
+dependencies = [
+ "proc-macro2",
+ "syn 2.0.117",
+]
 
 [[package]]
 name = "want"

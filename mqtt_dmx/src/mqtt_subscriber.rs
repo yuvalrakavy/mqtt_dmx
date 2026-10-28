@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use tracing::{error, info, info_span, Instrument};
-use rumqttc::v5::{EventLoop, Event, mqttbytes::v5::Packet};
+use tracing::{debug, error, info, info_span, warn, Instrument};
 use tokio::sync::{mpsc::Sender, oneshot};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     array_manager::DmxArrayError,
@@ -13,6 +13,7 @@ use crate::{
     defs::{self, EffectNodeDefinition, DIMMING_AMOUNT_MAX},
     defs::{EffectUsage, UniverseDefinition},
     messages,
+    mqtt_pump::{Incoming, PumpEvent},
     persistence::Persistence,
     service::MqttError,
 };
@@ -28,21 +29,57 @@ struct MqttSubscriber {
     values: HashMap<Arc<str>, String>,
 }
 
+/// Logs a failed command once, here where it failed, at the level and with the kind its cause
+/// calls for (the logging policy; its report on `DMX/Error` is published without a log line of its
+/// own):
+/// - one a manager refused — the ArtNet or the array manager: an array nobody defined, a universe
+///   number past 15 — is WARN `command_rejected`: the Store's configuration needs fixing;
+/// - one whose manager has gone while the service is not stopping is an ERROR `worker_died`: a
+///   task the bridge cannot run without ended (a panic), which wants a code change; while it is
+///   stopping, that is expected, and DEBUG;
+/// - anything else — a topic or a payload the bridge cannot parse — is input that failed
+///   validation, INFO `validation_rejected`.
+///
+/// Never `external_failure`: nothing external is down.
+fn log_failed_command(topic: &str, error: &Report<MqttError>, stopping: &CancellationToken) {
+    let manager_gone = error
+        .frames()
+        .filter_map(|frame| frame.downcast_ref::<MqttError>())
+        .any(|e| matches!(e, MqttError::ChannelClosed));
+    if manager_gone && stopping.is_cancelled() {
+        debug!(topic, error = %error, "DMX command not applied: the bridge is stopping");
+    } else if manager_gone {
+        error!(kind = "worker_died", topic, error = %error, "DMX command not applied: a manager the bridge cannot run without has stopped");
+    } else if error.contains::<ArtnetError>() || error.contains::<DmxArrayError>() {
+        warn!(kind = "command_rejected", topic, error = %error, "DMX command refused");
+    } else {
+        info!(kind = "validation_rejected", topic, error = %error, "DMX command rejected: it does not parse");
+    }
+}
+
+/// Handles the commands the pump forwards. It never polls: its waits — on the ArtNet and array
+/// managers, and on the error queue to the publisher — hold back this task alone, while the pump
+/// keeps draining rumqttc's request channel (no-hang §14.3). `stopping` is the service's: set when
+/// it begins to stop, before any of its tasks is aborted.
 pub async fn session(
-    mut event_loop: EventLoop,
+    mut incoming: Incoming,
     to_artnet_tx: Sender<messages::ToArtnetManagerMessage>,
     to_array_tx: Sender<messages::ToArrayManagerMessage>,
     to_mqtt_publisher_tx: async_channel::Sender<messages::ToMqttPublisherMessage>,
     persistence: Arc<Persistence>,
+    stopping: CancellationToken,
 ) -> Result<(), Report<MqttError>> {
     info!("Starting MQTT subscriber session");
     let into_context = || MqttError::Context("In MQTT subscriber session".to_string());
 
+    // The configuration as last saved, from memory: a read of the disk here would wait on it in
+    // an async worker, and could find it behind the saves still waiting to be written (no-hang F1).
+    let config = persistence.config();
     let mut mqtt_subscriber = MqttSubscriber {
-        universes: persistence.load_universes(),
-        arrays: persistence.load_arrays(),
-        effects: persistence.load_effects(),
-        values: persistence.load_values(),
+        universes: config.universes,
+        arrays: config.arrays,
+        effects: config.effects,
+        values: config.values,
         to_artnet_tx,
         to_array_tx,
         to_mqtt_publisher_tx,
@@ -50,9 +87,13 @@ pub async fn session(
     };
 
     loop {
-        let event = event_loop.poll().await.change_context_lazy(into_context)?;
-
-        if let Event::Incoming(Packet::Publish(publish)) = event {
+        // WAIT: mqtt-pump-queue
+        let publish = match incoming.recv().await {
+            Some(PumpEvent::Publish(publish)) => publish,
+            Some(PumpEvent::Ended(e)) => return Err(Report::new(MqttError::Context(format!("MQTT connection failed: {e}")))),
+            None => return Err(Report::new(MqttError::Context("the MQTT pump stopped".to_string()))),
+        };
+        {
             let topic = String::from_utf8_lossy(&publish.topic).into_owned();
             let payload = publish.payload.clone();
 
@@ -71,8 +112,8 @@ pub async fn session(
 
             let result = async {
                 if let Err(e) = mqtt_subscriber.handle_message(&topic, &payload).await {
-                    error!(kind = "decode_error", topic = %topic, error = %e,
-                           "MQTT message handling failed");
+                    log_failed_command(&topic, &e, &stopping);
+                    // WAIT: error-queue-send
                     mqtt_subscriber
                         .to_mqtt_publisher_tx
                         .send(messages::ToMqttPublisherMessage::Error(e.to_string()))
@@ -94,6 +135,7 @@ impl MqttSubscriber {
         &self,
         msg: messages::ToArtnetManagerMessage,
     ) -> Result<(), Report<MqttError>> {
+        // WAIT: artnet-queue
         self.to_artnet_tx
             .send(msg)
             .await
@@ -104,6 +146,7 @@ impl MqttSubscriber {
         &self,
         msg: messages::ToArrayManagerMessage,
     ) -> Result<(), Report<MqttError>> {
+        // WAIT: array-queue
         self.to_array_tx
             .send(msg)
             .await
@@ -184,6 +227,7 @@ impl MqttSubscriber {
             ))
             .await?;
 
+            // WAIT: artnet-reply
             if let Err(e) = Self::recv_reply(rx_artnet_reply.await)? {
                 return Err(e)
                     .change_context_lazy(|| MqttError::Context(String::from("removing universe")));
@@ -205,6 +249,7 @@ impl MqttSubscriber {
                     ))
                     .await?;
 
+                    // WAIT: artnet-reply
                     if let Err(e) = Self::recv_reply(rx_artnet_reply.await)? {
                         return Err(e).change_context_lazy(|| {
                             MqttError::Context(format!("adding universe {universe_id}"))
@@ -245,6 +290,7 @@ impl MqttSubscriber {
             ))
             .await?;
 
+            // WAIT: array-reply
             if let Err(e) = Self::recv_reply(rx.await)? {
                 return Err(e).change_context_lazy(|| {
                     MqttError::Context(format!("removing array {array_id}"))
@@ -268,6 +314,7 @@ impl MqttSubscriber {
                     ))
                     .await?;
 
+                    // WAIT: array-reply
                     if let Err(e) = Self::recv_reply(rx.await)? {
                         return Err(e).change_context_lazy(into_context);
                     }
@@ -296,6 +343,7 @@ impl MqttSubscriber {
             ))
             .await?;
 
+            // WAIT: array-reply
             if let Err(e) = Self::recv_reply(rx.await)? {
                 return Err(e).change_context_lazy(|| {
                     MqttError::Context(format!("removing global value {value_name}"))
@@ -319,6 +367,7 @@ impl MqttSubscriber {
                     ))
                     .await?;
 
+                    // WAIT: array-reply
                     if let Err(e) = Self::recv_reply(rx.await)? {
                         return Err(e).change_context_lazy(into_context);
                     }
@@ -347,6 +396,7 @@ impl MqttSubscriber {
             ))
             .await?;
 
+            // WAIT: array-reply
             if let Err(e) = Self::recv_reply(rx.await)? {
                 return Err(e).change_context_lazy(|| {
                     MqttError::Context(format!("removing effect {effect_id}"))
@@ -370,6 +420,7 @@ impl MqttSubscriber {
                     ))
                     .await?;
 
+                    // WAIT: array-reply
                     if let Err(e) = Self::recv_reply(rx.await)? {
                         return Err(e).change_context_lazy(into_context);
                     }
@@ -416,6 +467,7 @@ impl MqttSubscriber {
                     ))
                     .await?;
 
+                    // WAIT: array-reply
                     let _ = Self::recv_reply(rx.await)?;
                 }
 
@@ -436,6 +488,7 @@ impl MqttSubscriber {
                 ))
                 .await?;
 
+                // WAIT: array-reply
                 let result = Self::recv_reply(rx.await)?;
 
                 match result {
@@ -450,6 +503,7 @@ impl MqttSubscriber {
                         ))
                         .await?;
 
+                        // WAIT: artnet-reply
                         if let Err(e) = Self::recv_reply(rx.await)? {
                             return Err(e).change_context_lazy(into_context);
                         }
@@ -473,6 +527,7 @@ impl MqttSubscriber {
                 ))
                 .await?;
 
+                // WAIT: artnet-reply
                 if let Err(e) = Self::recv_reply(rx.await)? {
                     return Err(e).change_context_lazy(|| {
                         MqttError::Context(format!("stopping effect on array {array_id}"))
@@ -496,6 +551,7 @@ impl MqttSubscriber {
                 ))
                 .await?;
 
+                // WAIT: artnet-reply
                 if let Err(e) = Self::recv_reply(rx.await)? {
                     return Err(e).change_context_lazy(|| {
                         MqttError::Context(format!("setting channels on universe {universe_id}"))
@@ -506,5 +562,41 @@ impl MqttSubscriber {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use error_stack::{Report, ResultExt};
+    use tokio_util::sync::CancellationToken;
+    use tracing::Level;
+
+    use super::log_failed_command;
+    use crate::service::MqttError;
+    use crate::test_log::capture;
+
+    /// A command whose manager has gone: mid-run, a manager the bridge cannot run without has died
+    /// (a panic), an ERROR `worker_died`; while the service stops, expected, DEBUG — the stop
+    /// cancels the managers before it aborts the session (Store no-hang 3b, round 2).
+    #[test]
+    fn a_command_whose_manager_has_gone_is_an_error_unless_the_service_is_stopping() {
+        let gone = || {
+            Err::<(), _>(Report::new(MqttError::ChannelClosed))
+                .change_context(MqttError::Context("adding universe U".to_string()))
+                .unwrap_err()
+        };
+        let running = CancellationToken::new();
+        let mid_run = capture(|| log_failed_command("DMX/Universe/U", &gone(), &running));
+        assert!(
+            mid_run.len() == 1 && mid_run[0].level == Level::ERROR && mid_run[0].kind() == Some("worker_died"),
+            "a dead manager mid-run was not one ERROR worker_died: {mid_run:#?}"
+        );
+        let stopping = CancellationToken::new();
+        stopping.cancel();
+        let at_stop = capture(|| log_failed_command("DMX/Universe/U", &gone(), &stopping));
+        assert!(
+            at_stop.iter().all(|e| e.level == Level::DEBUG),
+            "a manager gone with the service's stop was logged above DEBUG: {at_stop:#?}"
+        );
     }
 }

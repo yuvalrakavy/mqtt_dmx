@@ -228,6 +228,7 @@ impl Owner {
         self.view();
         self.install = Some(Acknowledgement {
             connection,
+            // WAIT: v2-recovery-install
             future: Box::pin(ticket.wait()),
             reply: initiating,
         });
@@ -435,6 +436,7 @@ impl ProcessService for DmxService {
         let mut ticker = tokio::time::interval(Duration::from_millis(50));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
+            // WAIT: v2-owner-select
             tokio::select! {
                 biased;
                 _ = context.cancelled() => {
@@ -469,12 +471,15 @@ impl ProcessService for DmxService {
                     owner.output()?;
                     if save_worker.overdue(Instant::now(), Duration::from_secs(30)) { return Err("fallback worker exceeded its execution bound".into()); }
                 }
+                // WAIT: v2-recovery-install
                 result = async { owner.install.as_mut().unwrap().future.as_mut().await }, if owner.install.is_some() => {
                     owner.installation_finished(result);
                 }
+                // WAIT: v2-owner-job
                 result = async { job.as_mut().unwrap().await }, if job.is_some() => {
                     job = None; prepared = Some(result.map_err(|e| e.to_string())?);
                 }
+                // WAIT: v2-owner-job
                 result = async { fallback.as_mut().unwrap().await }, if fallback.is_some() => {
                     fallback = None;
                     match result.map_err(|e| e.to_string())? {
@@ -482,6 +487,7 @@ impl ProcessService for DmxService {
                         Err(error) => tracing::warn!(kind="fallback_unavailable", %error, "DMX startup fallback is unavailable"),
                     }
                 }
+                // WAIT: v2-save-result
                 result = async { save.as_mut().unwrap().await }, if save.is_some() => {
                     save = None; let (request, result) = result; let _ = request.reply.send(result);
                 }
@@ -506,6 +512,7 @@ impl ProcessService for DmxService {
                             })();
                             match result {
                                 Ok(ticket) => save = Some(Box::pin(async move {
+                                    // WAIT: v2-save-result
                                     let result = ticket.wait().await.map(|receipt| Some(serde_json::json!({"save_id":receipt.save_id,"revision":receipt.revision,"digest":receipt.digest}))).map_err(rejected);
                                     (request, result)
                                 })),

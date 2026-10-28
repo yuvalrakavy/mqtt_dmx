@@ -93,6 +93,7 @@ impl Proxy {
                 _bytes: bytes,
             })
             .map_err(|_| OpError::Rejected("DMX request mailbox is unavailable or full".into()))?;
+        // WAIT: v2-proxy-result
         result.await.map_err(|_| {
             OpError::Rejected("DMX engine stopped before acknowledging the request".into())
         })?
@@ -260,6 +261,7 @@ impl DeviceDriver for Proxy {
         self.reporter = None;
     }
     async fn read_state(&mut self, scope: Scope) -> Result<Vec<TargetState>, OpError> {
+        // WAIT: v2-proxy-result
         self.send(None, &RequestContext::default(), Action::Read(scope), 0)
             .await?;
         Ok(vec![])
@@ -273,6 +275,7 @@ impl DeviceDriver for Proxy {
             Scope::Target(target) => Some(target.clone()),
             _ => None,
         };
+        // WAIT: v2-proxy-result
         self.send(target.as_deref(), context, Action::Read(scope), 0)
             .await?;
         Ok(vec![])
@@ -300,6 +303,7 @@ impl DeviceDriver for Proxy {
         if value.len() > dmx_protocol::MAX_PLAYBACK_BYTES {
             return Err(rejected("playback exceeds 16KiB"));
         }
+        // WAIT: v2-proxy-result
         self.send(
             Some(target),
             context,
@@ -317,6 +321,7 @@ impl DeviceDriver for Proxy {
     ) -> Result<(), OpError> {
         let document = configuration(value)?;
         let cost = document.capacity();
+        // WAIT: v2-proxy-result
         self.send(Some(target), context, Action::Configure(document), cost)
             .await?;
         Ok(())
@@ -336,6 +341,7 @@ impl DeviceDriver for Proxy {
         if cost > QUEUE_BYTES {
             return Err(rejected("command exceeds DMX mailbox budget"));
         }
+        // WAIT: v2-proxy-result
         self.send(target, context, Action::Command(call.clone()), cost)
             .await
     }

@@ -1,0 +1,527 @@
+# Negative controls for mqtt_dmx's no-hang 3b change (Store no-hang §14). Run from Store with
+#     scripts/negative-control.py --root ../Home/mqtt_dmx-3b/mqtt_dmx ../Home/mqtt_dmx-3b/mqtt_dmx/docs/no-hang-3b-controls.toml
+# (The saturation tests' failing-first runs on the old session: the burst reported 1 of 100 error
+# reports after the broker recovered; the ArtNet manager stopped answering with its error queue
+# full. The ArtNet path's session test once used a failing command as its sentinel, which waits on
+# the error queue itself, so it went green with the ArtNet fix alone reverted (the pump fix alone
+# breaks that cycle). It now measures the bridge with commands that report no error, during the
+# stall and after it, and the_artnet_ticker_waits_on_the_error_queue_in_a_session reverts the
+# ArtNet fix alone.)
+
+[[control]]
+name        = "the_pump_waits_on_the_subscriber"
+file        = "src/mqtt_pump.rs"
+anchor      = '''                    Ok(Event::Incoming(Packet::Publish(publish))) => {
+                        pushed.pushed();'''
+replacement = '''                    Ok(Event::Incoming(Packet::Publish(publish))) => {
+                        // control: a forward queue of one — the pump waits for the subscriber
+                        while pushed.depth.load(Ordering::SeqCst) > 0 {
+                            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                        }
+                        pushed.pushed();'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "a_burst_of_failing_commands_against_a_stalled_broker"]
+expect_text = "error reports arrived after the broker recovered"
+guard       = "pump_waits_on_nothing"
+
+[[control]]
+name        = "the_artnet_ticker_waits_on_the_error_queue"
+file        = "src/artnet_manager/manager.rs"
+anchor      = '''                        if !reporter.report(format!("Effect {effect_id}: {e}")) {'''
+replacement = '''                        if reporter.to_mqtt_publisher.send(ToMqttPublisherMessage::Error(format!("Effect {effect_id}: {e}"))).await.is_err() {'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "the_ticker_keeps_answering_while_the_mqtt_error_queue_is_full"]
+expect_text = "the ArtNet manager stopped answering while the MQTT error queue was full"
+guard       = "artnet_never_waits_on_mqtt"
+
+[[control]]
+name        = "the_artnet_ticker_waits_on_the_error_queue_in_a_session"
+file        = "src/artnet_manager/manager.rs"
+anchor      = '''                        if !reporter.report(format!("Effect {effect_id}: {e}")) {'''
+replacement = '''                        if reporter.to_mqtt_publisher.send(ToMqttPublisherMessage::Error(format!("Effect {effect_id}: {e}"))).await.is_err() {'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "commands_that_wait_on_artnet_complete_while_its_errors_back_up"]
+expect_text = "the bridge stopped taking commands while the broker was stalled"
+guard       = "bridge_answers_while_the_broker_stalls"
+
+[[control]]
+name        = "a_failing_effect_drops_every_running_effect"
+file        = "src/artnet_manager/manager.rs"
+anchor      = '''        self.active_effects = active_effects; // Move it back
+        failed'''
+replacement = '''        // control: the old tick, which never put the effects back after a failure
+        if failed.is_empty() {
+            self.active_effects = active_effects;
+        }
+        failed'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "a_failing_effect_does_not_stop_the_others"]
+expect_text = "a failing effect stopped the healthy one"
+guard       = "effects_fail_alone"
+
+[[control]]
+name        = "every_dropped_report_is_a_warn"
+file        = "src/artnet_manager/manager.rs"
+anchor      = '''                    Some((_, dropped)) => *dropped += 1,'''
+replacement = '''                    Some((_, dropped)) => {
+                        *dropped += 1;
+                        warn!(kind = "error_report_dropped", "control: a WARN per dropped report");
+                    }'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "a_full_error_queue_is_one_warn_per_episode"]
+expect_text = "not one WARN per episode of dropped reports"
+guard       = "dropped_reports_one_warn"
+
+[[control]]
+name        = "a_drop_episode_never_ends"
+file        = "src/artnet_manager/manager.rs"
+anchor      = '''            if self.to_mqtt_publisher.len() <= half {'''
+replacement = '''            if self.to_mqtt_publisher.len() <= half && half == usize::MAX {'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "a_full_error_queue_is_one_warn_per_episode"]
+expect_text = "no INFO with each episode's total once the queue drained"
+guard       = "dropped_reports_drain_info"
+
+[[control]]
+name        = "the_backlog_never_raises_its_warn"
+file        = "src/mqtt_pump.rs"
+anchor      = '''        if high.is_none() {
+            *high = Some(Instant::now());'''
+replacement = '''        if false {
+            *high = Some(Instant::now());'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "a_backlog_past_high_water"]
+expect_text = "not flagged at the high-water mark"
+guard       = "backlog_high_water"
+
+[[control]]
+name        = "the_backlog_logs_under_its_lock"
+file        = "src/mqtt_pump.rs"
+anchor      = '''        if depth >= HIGH_WATER && self.raise() {
+            warn!('''
+replacement = '''        if depth >= HIGH_WATER && self.raise() {
+            // control: the WARN logged under the lock, as it was
+            let _held = self.high_since.lock().unwrap_or_else(|p| p.into_inner());
+            warn!('''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "the_backlog_logs_nothing_while_it_holds_its_lock"]
+expect_text = "logged while holding the backlog's lock"
+guard       = "backlog_logs_after_its_lock"
+
+[[control]]
+name        = "discarded_publishes_go_uncounted"
+file        = "src/mqtt_pump.rs"
+anchor      = '''        if discarded > 0 {'''
+replacement = '''        if discarded > 0 && discarded == 0 {'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "publishes_left_unread_when_a_session_ends"]
+expect_text = "no WARN counting the publishes discarded at session end"
+guard       = "session_end_counts_discards"
+
+[[control]]
+name        = "a_session_end_leaves_the_high_water_warn_standing"
+file        = "src/mqtt_pump.rs"
+anchor      = '''        if let Some(lasted) = self.backlog.clear() {'''
+replacement = '''        if let Some(lasted) = None::<Duration> {'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "publishes_left_unread_when_a_session_ends"]
+expect_text = "the standing high-water WARN was never closed"
+guard       = "session_end_closes_the_episode"
+
+[[control]]
+name        = "a_wait_loses_its_tag"
+file        = "src/mqtt_publisher.rs"
+anchor      = '''                    // WAIT: mqtt-request
+                    mqtt_client.publish_with_properties("DMX/LastError",'''
+replacement = '''                    mqtt_client.publish_with_properties("DMX/LastError",'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--test", "wait_registry"]
+expect_text = "is an untagged wait"
+guard       = "registry_wired"
+
+[[control]]
+name        = "a_tag_trails_its_code"
+file        = "src/mqtt_pump.rs"
+anchor      = '''                // WAIT: mqtt-poll
+                match events.poll().await {'''
+replacement = '''                match events.poll().await { // WAIT: mqtt-poll'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--test", "wait_registry", "--", "every_tag_is_on_its_own_line"]
+expect_text = "tag trails code on its line"
+guard       = "tags_survive_rustfmt"
+
+[[control]]
+name        = "a_collision_is_undeclared"
+file        = "docs/wait-registry.md"
+anchor      = '''local-methods = handle_message'''
+replacement = '''# local-methods = handle_message'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--test", "wait_registry"]
+expect_text = "`.handle_message(..).await` on a receiver other than `self`"
+guard       = "collision_declared"
+
+[[control]]
+name        = "an_outage_warns_at_every_attempt"
+file        = "src/mqtt_outage.rs"
+anchor      = '''                if down_for_ms >= WARN_AFTER.as_millis() as u64 && !self.warned.swap(true, Ordering::SeqCst) {'''
+replacement = '''                if down_for_ms >= WARN_AFTER.as_millis() as u64 {'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "an_outage_is_one_info_then_debug_attempts"]
+expect_text = "not one WARN for the outage"
+guard       = "outage_one_warn"
+
+[[control]]
+name        = "a_recovery_goes_unlogged"
+file        = "src/mqtt_outage.rs"
+anchor      = '''        if since == 0 || since > connection.at {'''
+replacement = '''        if since == 0 || since > connection.at || connection.proven {'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "an_outage_ends_when_a_connection_proves_itself"]
+expect_text = "not one INFO when the connection proved itself"
+guard       = "outage_recovery_info"
+
+[[control]]
+name        = "sigterm_goes_unhandled"
+file        = "src/main.rs"
+anchor      = '''        let term = register("SIGTERM", SignalKind::terminate());'''
+replacement = '''        let term = register("SIGTERM", SignalKind::user_defined1());'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--test", "process", "--", "sigterm_stops_the_bridge_through_its_shutdown"]
+expect_text = "the bridge did not stop cleanly on SIGTERM"
+guard       = "sigterm_stops"
+
+[[control]]
+name        = "the_stop_waits_on_a_stuck_task"
+file        = "src/service.rs"
+anchor      = '''        if tokio::time::timeout(bound, stop).await.is_err() {'''
+replacement = '''        if { stop.await; bound.is_zero() } {'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--", "stopping_is_bounded_when_a_task_will_not_end"]
+expect_text = "for a task stuck in a synchronous call"
+guard       = "stop_bounded"
+
+[[control]]
+name        = "a_failed_log_destination_takes_logging_down"
+file        = "src/main.rs"
+anchor      = '''        .on_destination_error(tracing_init::types::OnDestinationError::Skip)
+'''
+replacement = ''''''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--test", "process", "--", "a_log_destination_that_cannot_start"]
+expect_text = "no log reached GELF"
+guard       = "log_destinations_skip"
+
+# --- Store 3b re-review, round 2: X1 (F1), X2 (F2), X3 (F3), F4 ---
+
+[[control]]
+name        = "the_runtime_is_dropped_unbounded"
+file        = "src/main.rs"
+anchor      = '''    runtime.shutdown_timeout(RUNTIME_DRAIN);'''
+replacement = '''    drop(runtime); // control: the dropped runtime waits for every stuck thread'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--test", "process", "--", "a_stalled_config_write_does_not_hold_up_the_stop"]
+expect_text = "of SIGTERM while a config write was stalled"
+guard       = "runtime_shutdown_bounded"
+
+[[control]]
+name        = "the_subscriber_writes_its_saves"
+file        = "src/persistence.rs"
+anchor      = '''            state.pending.insert(file, json);
+        }
+        self.wake.notify_one();'''
+replacement = '''            state.pending.insert(file, json.clone());
+        }
+        // control: the save written by its caller, on an async worker
+        let _ = write_file(&self.storage_path, file, &json);
+        self.wake.notify_one();'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--test", "process", "--", "a_stalled_config_write_holds_up_no_command"]
+expect_text = "the bridge took no command after a config write stalled"
+guard       = "saves_off_the_async_workers"
+
+[[control]]
+name        = "the_startup_read_is_unbounded"
+file        = "src/persistence.rs"
+anchor      = '''        let config = match tokio::time::timeout(within, read).await {'''
+replacement = '''        let config = match Ok::<_, ()>(read.await) {'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--test", "process", "--", "a_stalled_config_read_at_startup_does_not_keep"]
+expect_text = "the bridge never reached its broker"
+guard       = "startup_read_bounded"
+
+[[control]]
+name        = "the_stop_waits_out_the_startup"
+file        = "src/main.rs"
+anchor      = '''        signal = stop.recv() => {'''
+replacement = '''        signal = std::future::pending::<&'static str>() => {'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--test", "process", "--", "a_stop_during_a_stalled_config_read_at_startup_is_prompt"]
+expect_text = "of SIGTERM during a stalled config read at startup"
+guard       = "stop_races_the_startup"
+
+[[control]]
+name        = "the_stop_aborts_the_writer_at_once"
+file        = "src/service.rs"
+anchor      = '''                // WAIT: writer-end
+                let _ = writer.await;'''
+replacement = '''                writer.abort();'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "a_stop_writes_what_was_saved_before_it"]
+expect_text = "the stop dropped a save made before it"
+guard       = "stop_flushes_saves"
+
+[[control]]
+name        = "every_save_failure_is_a_warn"
+file        = "src/persistence.rs"
+anchor      = '''        if self.since.is_none() {
+            self.since = Some(Instant::now());'''
+replacement = '''        if true {
+            self.since = Some(Instant::now());'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "a_failing_disk_is_one_warn"]
+expect_text = "not one WARN for the episode"
+guard       = "save_failures_one_warn"
+
+[[control]]
+name        = "every_reconnect_attempt_is_info"
+file        = "src/mqtt_outage.rs"
+anchor      = '''                debug!(kind = "connection_lost", attempts, down_for_ms, retry_in_s, "MQTT reconnect attempt failed");'''
+replacement = '''                tracing::info!(kind = "connection_lost", attempts, down_for_ms, retry_in_s, "MQTT reconnect attempt failed");'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "an_outage_is_one_info_then_debug_attempts"]
+expect_text = "not one INFO, at the outage's first attempt"
+guard       = "outage_attempts_debug"
+
+[[control]]
+name        = "the_outage_warn_lacks_its_attempts"
+file        = "src/mqtt_outage.rs"
+anchor      = '''                        kind = "external_failure",
+                        attempts,'''
+replacement = '''                        kind = "external_failure",'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "an_outage_is_one_info_then_debug_attempts"]
+expect_text = "the WARN does not carry the outage's attempts"
+guard       = "outage_warn_attempts"
+
+[[control]]
+name        = "a_first_reply_proves_the_connection"
+file        = "src/mqtt_outage.rs"
+anchor      = '''        if connection.proven || now.saturating_sub(connection.at) < STABLE_AFTER.as_millis() as u64 {'''
+replacement = '''        if connection.proven {'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "a_link_that_connects_and_drops_stays_one_outage"]
+expect_text = "a connection that dropped within seconds was logged as a recovery"
+guard       = "recovery_on_proof_of_life"
+
+[[control]]
+name        = "a_signal_failure_is_an_external_failure"
+file        = "src/main.rs"
+anchor      = '''            warn!(kind = "signal_handler_unavailable", signal, error = %error,'''
+replacement = '''            warn!(kind = "external_failure", signal, error = %error,'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "a_signal_without_a_handler_is_a_warn"]
+expect_text = "no signal_handler_unavailable WARN naming the signal"
+guard       = "signal_failure_kind"
+
+[[control]]
+name        = "active_before_the_subscription"
+file        = "src/service.rs"
+anchor      = '''        // Subscribe to commands
+        // WAIT: mqtt-request'''
+replacement = '''        // control: Active=true first, as it was
+        publish_retained(mqtt_client, ACTIVE_TOPIC, b"true".to_vec(), &props)
+            .await
+            .change_context_lazy(into_context)?;
+        // WAIT: mqtt-request'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "active_goes_out_only_after_the_subscription"]
+expect_text = "before it subscribed"
+guard       = "active_after_subscribe"
+
+[[control]]
+name        = "the_last_error_is_not_republished"
+file        = "src/service.rs"
+anchor      = '''        if let Some(report) = last_error.get() {'''
+replacement = '''        if let Some(report) = last_error.get().filter(|_| false) {'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "active_goes_out_only_after_the_subscription"]
+expect_text = "the model never arrived"
+guard       = "connack_republishes_last_error"
+
+# --- Store 3b round 2, kinds: a failed command is logged once, at the level and kind its cause
+# calls for; external_failure only for an external outage, as one episode ---
+
+# The publisher logs every report as an external_failure, as it did.
+[[control]]
+name        = "every_report_is_an_external_failure"
+file        = "src/mqtt_publisher.rs"
+anchor      = '''                debug!(error = ?error_message_body, "Reporting a DMX error on DMX/Error");'''
+replacement = '''                tracing::warn!(kind = "external_failure", error = ?error_message_body, "MQTT DMX command error reported");'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "a_failed_command_is_logged_once"]
+expect_text = "a failed command was logged as an ERROR or an external_failure"
+guard       = "reports_not_logged_again"
+
+# A command that does not parse is an ERROR decode_error, as it was.
+[[control]]
+name        = "a_parse_failure_is_an_error"
+file        = "src/mqtt_subscriber.rs"
+anchor      = '''        info!(kind = "validation_rejected", topic, error = %error, "DMX command rejected: it does not parse");'''
+replacement = '''        error!(kind = "decode_error", topic, error = %error, "MQTT message handling failed");'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "a_failed_command_is_logged_once"]
+expect_text = "a failed command was logged as an ERROR or an external_failure"
+guard       = "malformed_command_is_validation_rejected"
+
+# A command a manager refused is taken for malformed input.
+[[control]]
+name        = "a_refusal_is_taken_for_bad_input"
+file        = "src/mqtt_subscriber.rs"
+anchor      = '''    } else if error.contains::<ArtnetError>() || error.contains::<DmxArrayError>() {'''
+replacement = '''    } else if false {'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "a_failed_command_is_logged_once"]
+expect_text = "the malformed commands were not each one INFO validation_rejected"
+guard       = "refused_command_is_command_rejected"
+
+# An effect that fails at its tick is not logged where it failed (only its report was, by the publisher).
+[[control]]
+name        = "a_failed_effect_goes_unlogged"
+file        = "src/artnet_manager/manager.rs"
+anchor      = '''                        warn!(kind = "command_rejected", effect_id = %effect_id, error = %e,
+                              "DMX effect failed and was stopped");'''
+replacement = ''''''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "a_failed_command_is_logged_once"]
+expect_text = "the refused commands were not each one WARN command_rejected"
+guard       = "failed_effect_is_command_rejected"
+
+# A saved universe refused on restore is an ERROR decode_error, as it was.
+[[control]]
+name        = "a_refused_restore_is_an_error"
+file        = "src/service.rs"
+anchor      = '''                    warn!(kind = "command_rejected", universe_id = %universe_id, error = ?e,'''
+replacement = '''                    tracing::error!(kind = "decode_error", universe_id = %universe_id, error = ?e,'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "a_saved_config_the_managers_refuse_on_restore"]
+expect_text = "a refused restore was logged as an ERROR or an external_failure"
+guard       = "refused_restore_is_command_rejected"
+
+# A saved file that cannot be read is an external_failure, as it was.
+[[control]]
+name        = "an_unreadable_file_is_an_external_failure"
+file        = "src/persistence.rs"
+anchor      = '''            warn!(kind = "config_load_failed", path = %path.display(), error = %e,'''
+replacement = '''            warn!(kind = "external_failure", path = %path.display(), error = %e,'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "a_saved_file_that_cannot_be_read"]
+expect_text = "was not one WARN config_load_failed"
+guard       = "unreadable_file_is_config_load_failed"
+
+# Every failed ArtNet send is a WARN external_failure, as each report was.
+[[control]]
+name        = "every_failed_send_is_a_warn"
+file        = "src/artnet_manager/manager.rs"
+anchor      = '''        debug!(kind = "device_connection_lost", error, attempts = self.attempts, down_for_ms, "ArtNet send failed again");'''
+replacement = '''        warn!(kind = "external_failure", error, attempts = self.attempts, down_for_ms, "ArtNet send failed again");'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "failing_sends_are_one_outage_episode"]
+expect_text = "the later failures are not DEBUG"
+guard       = "send_failures_one_episode"
+
+# A manager gone at the service's stop is an ERROR too.
+[[control]]
+name        = "a_manager_gone_at_stop_is_an_error"
+file        = "src/mqtt_subscriber.rs"
+anchor      = '''    if manager_gone && stopping.is_cancelled() {'''
+replacement = '''    if manager_gone && stopping.is_cancelled() && false {'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "a_command_whose_manager_has_gone"]
+expect_text = "a manager gone with the service's stop was logged above DEBUG"
+guard       = "manager_gone_at_stop_is_debug"
+
+# --- Store 3b review round 3: B1, B2, X4, X5, X7 ---
+
+# B1: the logging's start is not raced against the stop: a stop waits for it.
+[[control]]
+name        = "the_logging_start_is_not_raced"
+file        = "src/main.rs"
+anchor      = '''        _ = stop.recv() => return None,'''
+replacement = '''        _ = std::future::pending::<()>() => return None,'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--test", "process", "--", "a_stop_during_a_held_logging_start_is_prompt"]
+expect_text = "of SIGTERM while its logging start was held"
+guard       = "logging_start_raced"
+
+# B2: the logging summary printed to stdout again, as it was.
+[[control]]
+name        = "a_lifecycle_line_goes_to_stdout"
+file        = "src/main.rs"
+anchor      = '''        info!("Logging: {guard}");'''
+replacement = '''        println!("Logging: {guard}");
+        info!("Logging: {guard}");'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--test", "process", "--", "a_full_output_pipe_holds_up_neither"]
+expect_text = "it waited on its full stdout or stderr"
+guard       = "no_lifecycle_prints"
+
+# X4: the model before Active=true, as it was.
+[[control]]
+name        = "the_model_goes_before_active"
+file        = "src/service.rs"
+anchor      = '''        publish_retained(mqtt_client, ACTIVE_TOPIC, b"true".to_vec(), &props)
+            .await
+            .change_context_lazy(into_context)?;
+        publish_retained(mqtt_client, "DMX/Version", get_version().into_bytes(), &props)'''
+replacement = '''        publish_retained(mqtt_client, "DMX/Version", get_version().into_bytes(), &props)
+            .await
+            .change_context_lazy(into_context)?;
+        publish_retained(mqtt_client, ACTIVE_TOPIC, b"true".to_vec(), &props)'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "active_goes_out_only_after_the_subscription"]
+expect_text = "not Active=true"
+guard       = "active_before_the_model"
+
+# X5: the device outage's WARN counts `failures`, as it did.
+[[control]]
+name        = "the_outage_counts_failures"
+file        = "src/artnet_manager/manager.rs"
+anchor      = '''            warn!(kind = "device_unreachable", attempts = self.attempts, down_for_ms, error,'''
+replacement = '''            warn!(kind = "device_unreachable", failures = self.attempts, down_for_ms, error,'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "failing_sends_are_one_outage_episode"]
+expect_text = "the WARN does not carry the outage's attempts"
+guard       = "device_outage_attempts"
+
+# X7: a failed write's content dropped, as it was.
+[[control]]
+name        = "a_failed_save_is_dropped"
+file        = "src/persistence.rs"
+anchor      = '''                self.locked().pending.entry(file).or_insert(content);'''
+replacement = '''                let _ = content;'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "a_failed_save_is_kept_and_tried_again_at_a_pace"]
+expect_text = "the failed save was never tried again"
+guard       = "failed_save_kept"
+
+# X7: the retry without its pause: a disk that refuses every write is spun on.
+[[control]]
+name        = "a_failed_save_is_retried_at_once"
+file        = "src/persistence.rs"
+anchor      = '''                let retry_at = tokio::time::Instant::now() + SAVE_RETRY_AFTER;'''
+replacement = '''                let retry_at = tokio::time::Instant::now();'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--bin", "mqtt_dmx", "--", "a_failed_save_is_kept_and_tried_again_at_a_pace"]
+expect_text = "the writer did not wait before trying again"
+guard       = "failed_save_paced"
+
+# F1 at process level: main drops the runtime, which waits for the held logging-start thread.
+[[control]]
+name        = "the_runtime_is_dropped_at_process_level"
+file        = "src/main.rs"
+anchor      = '''    runtime.shutdown_timeout(RUNTIME_DRAIN);'''
+replacement = '''    drop(runtime); // control: the dropped runtime waits for every stuck thread'''
+target      = "command"
+argv        = ["cargo", "test", "-q", "--target", "aarch64-apple-darwin", "--test", "process", "--", "a_stop_during_a_held_logging_start_is_prompt"]
+expect_text = "of SIGTERM while its logging start was held"
+guard       = "runtime_shutdown_bounded_process"

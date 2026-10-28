@@ -61,6 +61,7 @@ impl Preparation {
         let outcome = match self.edit {
             Edit::Publication(configuration) => EditOutcome::Configuration(
                 self.candidate
+                    // WAIT: v2-prepare-sync
                     .publish(configuration, self.deadline, Instant::now)?,
             ),
             Edit::Configuration {

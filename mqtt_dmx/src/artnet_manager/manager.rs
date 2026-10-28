@@ -1,4 +1,4 @@
-use tracing::{info, debug, trace};
+use tracing::{info, debug, trace, warn};
 use error_stack::{Report, ResultExt};
 use std::{
     collections::HashMap,
@@ -6,7 +6,7 @@ use std::{
     mem,
     net::{IpAddr, UdpSocket},
     sync::{Arc, Weak},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::{select, sync::mpsc::Receiver, time::interval};
 use tokio_util::sync::CancellationToken;
@@ -117,7 +117,7 @@ impl ArtnetManager {
         Ok(())
     }
 
-    fn start_effect(
+    pub(super) fn start_effect(
         &mut self,
         effect_id: &str,
         effect: Box<dyn EffectNodeRuntime>,
@@ -133,25 +133,28 @@ impl ArtnetManager {
         Ok(())
     }
 
-    fn tick(&mut self) -> Result<(), Report<ArtnetError>> {
+    /// Ticks every running effect. An effect whose tick fails is stopped, and its id and error
+    /// returned; every other effect runs on. (It used to return at the first failure, and the
+    /// effects taken out to run were never put back: one bad effect stopped every fade.)
+    pub(super) fn tick(&mut self) -> Vec<(String, Report<ArtnetError>)> {
         let mut active_effects = mem::take(&mut self.active_effects);
-        let mut completed_effect: Vec<String> = Vec::new();
+        let mut failed = Vec::new();
 
-        for (effect_id, effect) in active_effects.iter_mut() {
-            effect.tick(self)?;
-
-            if effect.is_done() {
-                completed_effect.push(effect_id.clone());
+        active_effects.retain(|effect_id, effect| match effect.tick(self) {
+            Ok(()) if effect.is_done() => {
+                trace!("Effect {} completed", effect_id);
+                false
             }
-        }
-
-        for id in completed_effect {
-            trace!("Effect {} completed", id);
-            active_effects.remove(&id);
-        }
+            Ok(()) => true,
+            Err(e) => {
+                info!(effect_id = %effect_id, error = %e, "Effect stopped: its tick failed");
+                failed.push((effect_id.clone(), e));
+                false
+            }
+        });
 
         self.active_effects = active_effects; // Move it back
-        Ok(())
+        failed
     }
 
     pub fn set_channel(&mut self, universe_id: &str, v: &ChannelValue) -> Result<(), Report<ArtnetError>> {
@@ -180,7 +183,10 @@ impl ArtnetManager {
         }
     }
 
-    fn send_modified_universes(&mut self) -> Result<(), Report<ArtnetError>> {
+    /// Sends every universe that is due; how many packets went out on the wire (a universe with
+    /// `disable_send` sends nothing).
+    fn send_modified_universes(&mut self) -> Result<usize, Report<ArtnetError>> {
+        let mut sent = 0;
         for (universe_id, universe) in self.universes.iter_mut() {
             if !universe.modified {
                 universe.non_modified_ticks += 1;
@@ -192,9 +198,12 @@ impl ArtnetManager {
             if universe.modified {
                 debug!("Sending packet to {}", universe_id);
                 universe.send()?;
+                if !universe.disable_send {
+                    sent += 1;
+                }
             }
         }
-        Ok(())
+        Ok(sent)
     }
 
     fn set_channels(
@@ -261,23 +270,37 @@ impl ArtnetManager {
     ) {
         // Set tick timer
         let mut tick_timer = interval(TICK_DURATION);
+        let mut reporter = Reporter::new(to_mqtt_publisher);
+        let mut send_outage = SendOutage::default();
 
-        loop {
+        'run: loop {
+            // WAIT: artnet-loop
             select! {
                 _ = cancel.cancelled() => break,
 
                 _ = tick_timer.tick() => {
-                    if let Err(e) = self.tick() {
-                        if to_mqtt_publisher.send(ToMqttPublisherMessage::Error(e.to_string())).await.is_err() {
-                            break;
+                    for (effect_id, e) in self.tick() {
+                        // A command that failed, logged where it failed (the logging policy):
+                        // once, since the tick stops the effect.
+                        warn!(kind = "command_rejected", effect_id = %effect_id, error = %e,
+                              "DMX effect failed and was stopped");
+                        if !reporter.report(format!("Effect {effect_id}: {e}")) {
+                            break 'run;
                         }
                     }
 
-                    if let Err(e) = self.send_modified_universes() {
-                        if to_mqtt_publisher.send(ToMqttPublisherMessage::Error(e.to_string())).await.is_err() {
-                            break;
+                    match self.send_modified_universes() {
+                        Ok(0) => {}
+                        Ok(_) => send_outage.sent(),
+                        Err(e) => {
+                            send_outage.failed(&e);
+                            if !reporter.report(e.to_string()) {
+                                break;
+                            }
                         }
                     }
+
+                    reporter.tick();
                 },
 
                 message = receiver.recv() => match message {
@@ -288,6 +311,112 @@ impl ArtnetManager {
         }
 
         info!("ArtnetManager stopped");
+    }
+}
+
+/// How long the ArtNet sends may keep failing before it is a WARN, once per outage.
+const SEND_OUTAGE_WARN_AFTER: Duration = Duration::from_secs(30);
+
+/// The ArtNet nodes' outage, as the sends see it: a send the kernel refuses — no route to the
+/// node, its port unreachable — is a failed attempt, and the tick tries again 50 ms later. One
+/// episode in the log (no-hang F2; it was a WARN `external_failure` per tick, 20 a second): INFO
+/// `device_connection_lost` at the first failure, DEBUG for the rest, one WARN `device_unreachable`
+/// once it has lasted 30 s, and INFO `device_recovered` with its length and `attempts` when a packet
+/// goes out again — the only proof of life ArtNet gives, since a node never answers.
+#[derive(Default)]
+pub(super) struct SendOutage {
+    since: Option<Instant>,
+    attempts: u64,
+    warned: bool,
+}
+
+impl SendOutage {
+    pub(super) fn failed(&mut self, error: &Report<ArtnetError>) {
+        self.failed_at(Instant::now(), &error.to_string());
+    }
+
+    pub(super) fn sent(&mut self) {
+        self.sent_at(Instant::now());
+    }
+
+    pub(super) fn failed_at(&mut self, now: Instant, error: &str) {
+        self.attempts += 1;
+        let Some(since) = self.since else {
+            self.since = Some(now);
+            info!(kind = "device_connection_lost", error, "ArtNet send failed: the node is unreachable");
+            return;
+        };
+        let down_for_ms = now.saturating_duration_since(since).as_millis() as u64;
+        debug!(kind = "device_connection_lost", error, attempts = self.attempts, down_for_ms, "ArtNet send failed again");
+        if !self.warned && now.saturating_duration_since(since) >= SEND_OUTAGE_WARN_AFTER {
+            self.warned = true;
+            warn!(kind = "device_unreachable", attempts = self.attempts, down_for_ms, error,
+                  "ArtNet node unreachable: sends have failed for over 30 s");
+        }
+    }
+
+    pub(super) fn sent_at(&mut self, now: Instant) {
+        if let Some(since) = self.since.take() {
+            info!(kind = "device_recovered", down_for_ms = now.saturating_duration_since(since).as_millis() as u64,
+                  attempts = self.attempts, "ArtNet sends go out again");
+        }
+        self.attempts = 0;
+        self.warned = false;
+    }
+}
+
+/// Hands the ArtNet manager's error reports to the MQTT publisher without waiting (Store no-hang
+/// §14.3). The ticker never waits on MQTT: the commands that wait on its replies come through the
+/// MQTT session, and while the broker is slow, or the bridge is between sessions and nobody takes
+/// from the queue, a wait here would also freeze every running fade.
+///
+/// With the queue full, the newest report displaces the oldest. A run of displaced reports is one
+/// episode: each report at DEBUG, one WARN when it starts, and an INFO with how many were dropped
+/// once the publisher has drained the queue to half (a fade failing at 20 ticks a second would
+/// otherwise be 20 WARNs a second).
+pub(super) struct Reporter {
+    to_mqtt_publisher: async_channel::Sender<ToMqttPublisherMessage>,
+    /// While reports are being dropped: since when, and how many so far.
+    dropping: Option<(Instant, u64)>,
+}
+
+impl Reporter {
+    pub(super) fn new(to_mqtt_publisher: async_channel::Sender<ToMqttPublisherMessage>) -> Reporter {
+        Reporter { to_mqtt_publisher, dropping: None }
+    }
+
+    /// Queues `error`, displacing the oldest report when the queue is full. `false` once the
+    /// queue is closed.
+    pub(super) fn report(&mut self, error: String) -> bool {
+        match self.to_mqtt_publisher.force_send(ToMqttPublisherMessage::Error(error)) {
+            Ok(None) => true,
+            Ok(Some(ToMqttPublisherMessage::Error(displaced))) => {
+                debug!(error = %displaced, "DMX error report dropped");
+                match &mut self.dropping {
+                    Some((_, dropped)) => *dropped += 1,
+                    None => {
+                        self.dropping = Some((Instant::now(), 1));
+                        warn!(kind = "error_report_dropped", queue = self.to_mqtt_publisher.capacity(),
+                              "DMX error reports are being dropped: the MQTT error queue is full");
+                    }
+                }
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Ends an episode of dropped reports once the publisher has drained the queue to half: an
+    /// INFO with its total. Called every tick.
+    pub(super) fn tick(&mut self) {
+        if let Some((since, dropped)) = self.dropping {
+            let half = self.to_mqtt_publisher.capacity().map_or(usize::MAX, |c| c / 2);
+            if self.to_mqtt_publisher.len() <= half {
+                self.dropping = None;
+                info!(kind = "error_report_drop_ended", dropped, lasted_ms = since.elapsed().as_millis() as u64,
+                      "DMX error reports reach the MQTT error queue again");
+            }
+        }
     }
 }
 
@@ -497,5 +626,47 @@ impl Universe {
         self.modified = false;
         self.non_modified_ticks = 0;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod send_outage_tests {
+    use super::SendOutage;
+    use crate::test_log::capture;
+    use std::time::{Duration, Instant};
+    use tracing::Level;
+
+    /// Sends that keep failing — the node's network gone, a tick every 50 ms — are one episode in
+    /// the log: one INFO `device_connection_lost`, one WARN `device_unreachable` past 30 s, and one
+    /// INFO `device_recovered` with its length when a packet goes out again. Never `external_failure`
+    /// per tick, as the publisher logged each one (Store no-hang 3b, round 2).
+    #[test]
+    fn failing_sends_are_one_outage_episode() {
+        let mut outage = SendOutage::default();
+        let start = Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        let events = capture(|| {
+            for ms in (0..40_000).step_by(50) {
+                outage.failed_at(at(ms), "No route to host");
+            }
+            outage.sent_at(at(40_000));
+            outage.sent_at(at(40_050));
+        });
+        let of = |level: Level, kind: &str| events.iter().filter(|e| e.level == level && e.kind() == Some(kind)).count();
+        assert_eq!(of(Level::INFO, "device_connection_lost"), 1, "not one INFO as the sends began to fail: {events:#?}");
+        assert_eq!(of(Level::DEBUG, "device_connection_lost"), 799, "the later failures are not DEBUG");
+        let warns: Vec<_> = events.iter().filter(|e| e.level <= Level::WARN).collect();
+        assert!(
+            warns.len() == 1 && warns[0].kind() == Some("device_unreachable") && warns[0].field("down_for_ms") == Some("30000"),
+            "not one WARN device_unreachable once the sends had failed for 30 s: {warns:#?}"
+        );
+        let recovered: Vec<_> = events.iter().filter(|e| e.level == Level::INFO && e.kind() == Some("device_recovered")).collect();
+        assert!(
+            recovered.len() == 1 && recovered[0].field("down_for_ms") == Some("40000"),
+            "not one INFO device_recovered with the outage's length: {recovered:#?}"
+        );
+        // The fleet's field for an outage's count (Store's kind table; review round 3, X5).
+        assert_eq!(warns[0].field("attempts"), Some("601"), "the WARN does not carry the outage's attempts");
+        assert_eq!(recovered[0].field("attempts"), Some("800"), "the recovery does not carry the outage's attempts");
     }
 }

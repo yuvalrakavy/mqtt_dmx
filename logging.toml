@@ -1,8 +1,11 @@
 # Logging & tracing configuration for the mqtt_dmx bridge.
 #
 # Auto-discovered by tracing-init: searched upward from the process working
-# directory — found here when running from anywhere inside the repo. For Pi
-# deployment, copy next to the binary (the service's WorkingDirectory).
+# directory — found here when running from anywhere inside the repo. On the Pi,
+# mqtt_dmx/dmx_TLV.service runs the bridge from WorkingDirectory=/home/yuval
+# (next to the binary): install this file as /home/yuval/logging.toml. Without
+# it the bridge still starts, logging to its file only; the bridge also pins
+# on_destination_error = skip in code, so no destination can stop it.
 #
 # Fleet policy: ~/Documents/Projects/Store/docs/guides/logging-policy.md
 # (ERROR = code fix warranted; WARN = zero-at-idle, every WARN carries kind).
