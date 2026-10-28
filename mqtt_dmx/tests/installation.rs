@@ -495,6 +495,72 @@ fn rehash(c: &mut Configuration) {
 }
 
 #[test]
+fn unresolved_publication_references_preserve_live_configuration_output_and_timeline() {
+    let mut live = installation();
+    live.desired(&id(2), request(1), id(7), None, Instant::now)
+        .unwrap();
+    live.tick().unwrap();
+    for (case, expected) in [
+        ("rename universe", "unknown default universe"),
+        ("remove universe", "unknown default universe"),
+        ("missing group", "unknown light group"),
+        ("missing explicit universe", "unknown universe reference"),
+        ("missing selected effect", "unpublished effect"),
+    ] {
+        let mut candidate = next_config(&live);
+        match case {
+            "rename universe" => {
+                candidate.content.universes.get_mut(&id(1)).unwrap().name = "renamed".into()
+            }
+            "remove universe" => candidate.content.universes.clear(),
+            "missing group" => {
+                candidate
+                    .content
+                    .arrays
+                    .get_mut(&id(2))
+                    .unwrap()
+                    .lights
+                    .insert("all".into(), "@missing".into());
+            }
+            "missing explicit universe" => {
+                candidate
+                    .content
+                    .arrays
+                    .get_mut(&id(2))
+                    .unwrap()
+                    .lights
+                    .insert("all".into(), "$missing,1".into());
+            }
+            "missing selected effect" => {
+                candidate.content.arrays.get_mut(&id(2)).unwrap().on = Some(id(99))
+            }
+            _ => unreachable!(),
+        }
+        rehash(&mut candidate);
+        let before = live.document();
+        let output = live.output(&id(2), &channel());
+        let error = live
+            .publish(candidate, None, Instant::now)
+            .err()
+            .expect("broken reference was accepted");
+        assert!(error.to_string().contains(expected), "{case}: {error}");
+        assert_eq!(live.document(), before, "{case} changed live state");
+        assert_eq!(
+            live.output(&id(2), &channel()),
+            output,
+            "{case} changed output"
+        );
+    }
+    live.tick().unwrap();
+    assert_eq!(
+        live.output(&id(2), &channel()),
+        128,
+        "refused publications restarted the animation"
+    );
+    assert_eq!(live.receipt(&id(2)).unwrap().execution, id(7));
+}
+
+#[test]
 fn bridge_publication_uses_resolved_ownership_and_retries_keep_the_running_timeline() {
     let mut c = config();
     c.content

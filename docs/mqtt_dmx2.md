@@ -38,6 +38,11 @@ running execution; changed mappings receive fresh generations and require comple
 Off. New arrays start Off. Configuration request generations are compatibility
 placeholders, never authority chosen by the publisher.
 
+The bridge refuses a configuration with unresolved universe, light-group or
+selected-effect references, preserving the accepted configuration and running
+lighting. Renaming a universe while an array still refers to its old name is
+therefore refused; publication does not automatically rewrite references.
+
 The accepted configuration in `State/{instance}/configuration` contains the assigned
 generations and its recalculated content digest. Publication comparison ignores only
 those generations and their derived digest; authored content and ordering still match
