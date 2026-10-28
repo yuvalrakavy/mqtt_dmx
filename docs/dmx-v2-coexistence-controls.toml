@@ -1,0 +1,11 @@
+[[control]]
+name = "separate_broker_boundary_removed"
+guard = "Legacy wire traffic cannot reach the v2 service on its separate broker"
+file = "mqtt_dmx/tests/service_v2.rs"
+anchor = '''    let current = FakeBroker::start().await;'''
+replacement = '''    let current = &legacy;'''
+crate = "mqtt_dmx"
+target = "test:service_v2"
+test = "legacy_protocol_on_a_separate_broker_cannot_change_default_root_v2_output"
+expect = "red"
+expect_text = "p.topic != \"DMX/Command/Set\""

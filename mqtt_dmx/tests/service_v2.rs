@@ -35,6 +35,92 @@ fn v2_cli_names_the_binary_and_documents_the_actual_default_root() {
     assert!(help.contains("--instance"));
     assert!(help.contains("--startup-fallback"));
 }
+
+#[tokio::test]
+async fn legacy_protocol_on_a_separate_broker_cannot_change_default_root_v2_output() {
+    // Exercise the v1 wire contract on its own broker. The preserved v1 binary
+    // takes a host on fixed port 1883, so this probe uses its MQTT identity and
+    // topics with an ephemeral port rather than touching an installed broker.
+    let legacy = FakeBroker::start_multi().await;
+    let current = FakeBroker::start().await;
+    let output = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    current.retain(
+        "DMX/State/one/_recovery",
+        serde_json::to_vec(&serde_json::json!({"snapshot":snapshot(output.local_addr().unwrap())}))
+            .unwrap(),
+        &SendOptions::default(),
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let running = bridge()
+        .instance("one")
+        .broker(&current.address())
+        .start_managed(DmxService::new(directory.path().join("v2-startup.json")))
+        .await
+        .unwrap();
+    let options = rumqttc::v5::MqttOptions::new("DMX", "127.0.0.1", legacy.port());
+    let (client, mut eventloop) = rumqttc::v5::AsyncClient::new(options, 10);
+    let pump = tokio::spawn(async move {
+        loop {
+            eventloop.poll().await.unwrap();
+        }
+    });
+    use rumqttc::v5::mqttbytes::QoS;
+    client.subscribe("DMX/#", QoS::AtLeastOnce).await.unwrap();
+    for (topic, payload) in [("DMX/Active", "true"), ("DMX/Universe/one", "{\"description\":\"legacy\",\"controller\":\"127.0.0.1\",\"net\":0,\"subnet\":0,\"universe\":0,\"channels\":2,\"log\":false,\"disable_send\":true}"), ("DMX/Command/Set", "{\"universe_id\":\"one\",\"channels\":\"s:1\",\"target\":\"s(0)\",\"dimming_amount\":1000}")] {
+        client.publish(topic, QoS::AtLeastOnce, true, payload).await.unwrap();
+    }
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !legacy
+            .received()
+            .iter()
+            .any(|p| p.topic == "DMX/Command/Set")
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let mut packet = [0u8; 1024];
+        loop {
+            let (length, source) = output.recv_from(&mut packet).await.unwrap();
+            assert!(source.ip().is_loopback());
+            assert_eq!(&packet[..8], b"Art-Net\0");
+            if length > 19 && packet[19] == 255 {
+                break;
+            }
+        }
+        for _ in 0..3 {
+            output.recv_from(&mut packet).await.unwrap();
+            assert_eq!(packet[19], 255, "legacy broker changed v2 lighting");
+        }
+    })
+    .await
+    .expect("separate-broker coexistence did not produce both legacy traffic and v2 output");
+    assert!(current
+        .received()
+        .iter()
+        .all(|p| p.topic != "DMX/Command/Set" && p.topic != "DMX/Universe/one"));
+    assert!(legacy
+        .received()
+        .iter()
+        .all(|p| !p.topic.starts_with("DMX/State/") && !p.topic.starts_with("DMX/Status/")));
+    assert!(!directory.path().join("v2-startup.json").exists());
+    assert!(running.stop().await);
+    pump.abort();
+    let _ = pump.await;
+    for binary in [
+        env!("CARGO_BIN_EXE_mqtt_dmx"),
+        env!("CARGO_BIN_EXE_mqtt_dmx2"),
+    ] {
+        let help = std::process::Command::new(binary)
+            .arg("--help")
+            .output()
+            .unwrap();
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&help.stdout),
+            String::from_utf8_lossy(&help.stderr)
+        );
+        assert!(text.contains("Usage: mqtt_dmx"), "{binary}: {text}");
+    }
+}
 fn snapshot(endpoint: SocketAddr) -> String {
     let mut content = Content::default();
     content.universes.insert(

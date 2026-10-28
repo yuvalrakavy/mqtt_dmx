@@ -1,0 +1,22 @@
+{
+ "rows": {
+  "separate_broker_boundary_removed": {
+   "last_real": {
+    "at": "2026-10-28T01:49:03Z",
+    "dirty": true,
+    "expected": "RED",
+    "fingerprints": {
+     "files": "files:1f5c5de347a5f6e0",
+     "guard": "item:c811c3d62136acc8",
+     "row": "288f62b66c1afb9e",
+     "test": "test:d259b803c530e369"
+    },
+    "path": "cargo",
+    "secs": 4.4,
+    "sha": "3a351d794cde91300660e5540fc320e867c44fc7",
+    "verdict": "RED"
+   }
+  }
+ },
+ "version": 1
+}
